@@ -1,0 +1,76 @@
+# Vector Configuration for Masala Supabase Stack
+# Collects logs from Docker containers and forwards to Logflare
+
+api:
+  enabled: true
+  address: 0.0.0.0:9001
+
+sources:
+  docker_logs:
+    type: docker_logs
+    include_containers:
+      - masala-db
+      - masala-kong
+      - masala-rest
+      - masala-storage
+      - masala-functions
+      - masala-analytics
+      - masala-meta
+      - masala-studio
+      - masala-supavisor
+      - masala-imgproxy
+
+transforms:
+  parse_logs:
+    type: remap
+    inputs:
+      - docker_logs
+    source: |
+      .project = "masala"
+      .timestamp = now()
+
+      # Parse JSON logs if applicable
+      if is_string(.message) {
+        parsed, err = parse_json(.message)
+        if err == null {
+          . = merge(., parsed)
+        }
+      }
+
+      # Extract container name
+      .container = get(.container_name) ?? "unknown"
+
+      # Add log level if not present
+      if !exists(.level) {
+        if contains(string!(.message), "error") || contains(string!(.message), "ERROR") {
+          .level = "error"
+        } else if contains(string!(.message), "warn") || contains(string!(.message), "WARN") {
+          .level = "warn"
+        } else {
+          .level = "info"
+        }
+      }
+
+sinks:
+  logflare:
+    type: http
+    inputs:
+      - parse_logs
+    uri: http://analytics:4000/api/logs
+    encoding:
+      codec: json
+    method: post
+    request:
+      headers:
+        x-api-key: "${LOGFLARE_API_KEY}"
+        content-type: application/json
+    batch:
+      max_bytes: 1048576
+      timeout_secs: 1
+
+  console:
+    type: console
+    inputs:
+      - parse_logs
+    encoding:
+      codec: json

@@ -1,0 +1,28 @@
+# Environment files (contain secrets)
+.env
+.env.local
+.env.*.local
+
+# Docker volumes (runtime data)
+volumes/storage/*
+!volumes/storage/.gitkeep
+
+# Logs
+volumes/logs/**/*.log
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node modules (if any)
+node_modules/
+
+# Deno cache
+.deno/

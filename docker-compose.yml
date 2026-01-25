@@ -1,0 +1,321 @@
+name: masala
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24
+
+volumes:
+  masala_db-config:
+  masala_storage:
+
+services:
+  # ===========================================
+  # PostgreSQL Database
+  # ===========================================
+  db:
+    image: supabase/postgres:15.8.1.060
+    container_name: masala-db
+    restart: unless-stopped
+    healthcheck:
+      test: pg_isready -U postgres -h localhost
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - log_min_messages=fatal
+    ports:
+      - "127.0.0.1:5534:5432"
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: 5432
+      POSTGRES_PORT: 5432
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: postgres
+      POSTGRES_DB: postgres
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXP: 3600
+    volumes:
+      - masala_db-config:/etc/postgresql-custom
+      - ./volumes/db/init:/docker-entrypoint-initdb.d:Z
+    networks:
+      default:
+        ipv4_address: 172.21.0.5
+
+  # ===========================================
+  # Kong API Gateway
+  # ===========================================
+  kong:
+    image: kong:2.8.1
+    container_name: masala-kong
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:8100:8000/tcp"
+      - "0.0.0.0:8543:8443/tcp"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-supabase}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-this_password_is_insecure_and_should_be_updated}
+    volumes:
+      - ./volumes/api/kong.yml:/home/kong/kong.yml:ro
+    extra_hosts:
+      - "rest:172.21.0.10"
+      - "storage:172.21.0.11"
+      - "functions:172.21.0.12"
+      - "meta:172.21.0.14"
+    networks:
+      default:
+        ipv4_address: 172.21.0.2
+
+  # ===========================================
+  # PostgREST
+  # ===========================================
+  rest:
+    image: postgrest/postgrest:v12.2.0
+    container_name: masala-rest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@db:5432/postgres
+      PGRST_DB_SCHEMAS: public,storage
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
+      PGRST_APP_SETTINGS_JWT_EXP: 3600
+    command: postgrest
+    networks:
+      default:
+        ipv4_address: 172.21.0.10
+
+  # ===========================================
+  # Supabase Storage
+  # ===========================================
+  storage:
+    image: supabase/storage-api:v1.11.13
+    container_name: masala-storage
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --no-verbose
+        - --tries=1
+        - --spider
+        - http://localhost:5000/status
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+      imgproxy:
+        condition: service_started
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+      ENABLE_IMAGE_TRANSFORMATION: "true"
+      IMGPROXY_URL: http://imgproxy:5001
+    volumes:
+      - masala_storage:/var/lib/storage:z
+    networks:
+      default:
+        ipv4_address: 172.21.0.11
+
+  # ===========================================
+  # Image Proxy
+  # ===========================================
+  imgproxy:
+    image: darthsim/imgproxy:v3.8.0
+    container_name: masala-imgproxy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - imgproxy
+        - health
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    environment:
+      IMGPROXY_BIND: ":5001"
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
+      IMGPROXY_USE_ETAG: "true"
+      IMGPROXY_ENABLE_WEBP_DETECTION: "true"
+    volumes:
+      - masala_storage:/var/lib/storage:z
+    networks:
+      default:
+        ipv4_address: 172.21.0.17
+
+  # ===========================================
+  # Edge Functions Runtime
+  # ===========================================
+  functions:
+    image: supabase/edge-runtime:v1.65.3
+    container_name: masala-functions
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+      VERIFY_JWT: "false"
+      # App-specific
+      MSG91_AUTH_KEY: ${MSG91_AUTH_KEY}
+      MSG91_OTP_TEMPLATE: ${MSG91_OTP_TEMPLATE}
+      MSG91_TEMPLATE: ${MSG91_TEMPLATE}
+      MSG91_SENDER_ID: ${MSG91_SENDER_ID:-MSSHOP}
+      FCM_SERVER_KEY: ${FCM_SERVER_KEY}
+      OTP_SECRET: ${OTP_SECRET}
+    volumes:
+      - ./volumes/functions:/home/deno/functions:Z
+    command:
+      - start
+      - --main-service
+      - /home/deno/functions/main
+    networks:
+      default:
+        ipv4_address: 172.21.0.12
+
+  # ===========================================
+  # Postgres Meta
+  # ===========================================
+  meta:
+    image: supabase/postgres-meta:v0.84.2
+    container_name: masala-meta
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: db
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: postgres
+      PG_META_DB_USER: supabase_admin
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
+    networks:
+      default:
+        ipv4_address: 172.21.0.14
+
+  # ===========================================
+  # Supabase Studio (optional - for dashboard)
+  # ===========================================
+  studio:
+    image: supabase/studio:20241202-71e5240
+    container_name: masala-studio
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    ports:
+      - "0.0.0.0:54424:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      meta:
+        condition: service_started
+    environment:
+      STUDIO_PG_META_URL: http://meta:8080
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DEFAULT_ORGANIZATION_NAME: Masala Spice Shop
+      DEFAULT_PROJECT_NAME: Masala MVP
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_PUBLIC_URL: ${API_EXTERNAL_URL:-http://localhost:8100}
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+      NEXT_PUBLIC_ENABLE_LOGS: "false"
+    networks:
+      default:
+        ipv4_address: 172.21.0.15
+
+  # ===========================================
+  # Supavisor Connection Pooler
+  # ===========================================
+  supavisor:
+    image: supabase/supavisor:1.1.56
+    container_name: masala-supavisor
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -sSfL
+        - --head
+        - -o
+        - /dev/null
+        - http://127.0.0.1:4000/api/health
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "127.0.0.1:5535:5432"
+      - "127.0.0.1:6643:6543"
+      - "127.0.0.1:4101:4000"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 4000
+      POSTGRES_PORT: 5432
+      POSTGRES_HOST: db
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DATABASE_URL: ecto://supabase_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      CLUSTER_POSTGRES: "true"
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:-UpNVntn3cDxHJpq99YMc1T1AQgQpc8kfYTuRgBiYa15BLrx8etQoXz3gZv1/u2oq}
+      VAULT_ENC_KEY: ${VAULT_ENC_KEY:-your-super-secret-and-long-vault-encryption-key-min-32-chars}
+      API_JWT_SECRET: ${JWT_SECRET}
+      METRICS_JWT_SECRET: ${JWT_SECRET}
+      REGION: local
+      ERL_AFLAGS: -proto_dist inet_tcp
+    command:
+      - /bin/sh
+      - -c
+      - |
+        /app/bin/migrate && /app/bin/supavisor start
+    networks:
+      default:
+        ipv4_address: 172.21.0.18
