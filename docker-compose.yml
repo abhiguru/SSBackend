@@ -121,7 +121,7 @@ services:
         - --no-verbose
         - --tries=1
         - --spider
-        - http://localhost:5000/status
+        - http://127.0.0.1:5000/status
       interval: 5s
       timeout: 5s
       retries: 5
@@ -241,12 +241,8 @@ services:
     container_name: masala-studio
     restart: unless-stopped
     healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
-      interval: 5s
+      test: ["CMD-SHELL", "node -e \"fetch('http://$(hostname -i):3000/api/profile').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
       timeout: 5s
       retries: 3
     ports:
