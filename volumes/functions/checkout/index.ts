@@ -81,7 +81,9 @@ export async function handler(req: Request): Promise<Response> {
       .eq('key', 'serviceable_pincodes')
       .single();
 
-    const serviceablePincodes: string[] = pincodeSettings?.value ? JSON.parse(pincodeSettings.value) : [];
+    const serviceablePincodes: string[] = pincodeSettings?.value
+      ? (typeof pincodeSettings.value === 'string' ? JSON.parse(pincodeSettings.value) : pincodeSettings.value)
+      : [];
 
     if (serviceablePincodes.length > 0 && !serviceablePincodes.includes(address.pincode)) {
       return new Response(

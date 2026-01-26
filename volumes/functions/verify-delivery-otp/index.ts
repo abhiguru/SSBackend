@@ -56,7 +56,7 @@ export async function handler(req: Request): Promise<Response> {
     // Get order
     const { data: order, error: orderError } = await supabase
       .from('orders')
-      .select('*, user:users(phone)')
+      .select('*, user:users!orders_user_id_fkey(phone)')
       .eq('id', body.order_id)
       .single();
 
