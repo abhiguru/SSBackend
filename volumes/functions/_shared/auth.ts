@@ -5,9 +5,16 @@ import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-
 export interface JWTPayload {
   sub: string;      // user id
   phone: string;
-  role: 'customer' | 'admin' | 'delivery_staff' | 'super_admin';
+  role: string;     // PostgreSQL role for PostgREST (always 'authenticated')
+  user_role: 'customer' | 'admin' | 'delivery_staff' | 'super_admin'; // app-level role
   iat: number;
   exp: number;
+}
+
+export interface SignJWTInput {
+  sub: string;
+  phone: string;
+  user_role: 'customer' | 'admin' | 'delivery_staff' | 'super_admin';
 }
 
 export interface AuthContext {
@@ -97,7 +104,7 @@ export async function verifyJWT(token: string): Promise<JWTPayload | null> {
 }
 
 // Sign JWT
-export async function signJWT(payload: Omit<JWTPayload, 'iat' | 'exp'>, expiresIn = 3600): Promise<string> {
+export async function signJWT(payload: SignJWTInput, expiresIn = 3600): Promise<string> {
   const secret = Deno.env.get('JWT_SECRET');
   if (!secret) throw new Error('JWT_SECRET not configured');
 
@@ -105,7 +112,10 @@ export async function signJWT(payload: Omit<JWTPayload, 'iat' | 'exp'>, expiresI
   const now = Math.floor(Date.now() / 1000);
 
   const fullPayload: JWTPayload = {
-    ...payload,
+    sub: payload.sub,
+    phone: payload.phone,
+    role: 'authenticated',        // PostgreSQL role for PostgREST SET ROLE
+    user_role: payload.user_role,  // app-level role for RLS policies
     iat: now,
     exp: now + expiresIn,
   };
@@ -168,7 +178,7 @@ export async function requireAuth(req: Request): Promise<AuthContext> {
   return {
     userId: payload.sub,
     phone: payload.phone,
-    role: payload.role,
+    role: payload.user_role,
   };
 }
 

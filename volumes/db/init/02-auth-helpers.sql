@@ -31,30 +31,34 @@ $$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 -- =============================================
 -- auth.role() - Extract user role from JWT
 -- =============================================
+-- Reads 'user_role' claim first (new JWT format), falls back to 'role' claim
+-- for backward compat and service_role tokens.
 CREATE OR REPLACE FUNCTION auth.role()
 RETURNS user_role AS $$
 DECLARE
-    jwt_claim TEXT;
+    jwt_claims JSON;
+    user_role_claim TEXT;
+    role_claim TEXT;
 BEGIN
-    -- Get the 'role' claim from the JWT
-    jwt_claim := current_setting('request.jwt.claims', true)::json->>'role';
+    jwt_claims := current_setting('request.jwt.claims', true)::json;
+    user_role_claim := jwt_claims->>'user_role';
+    role_claim := jwt_claims->>'role';
 
-    IF jwt_claim IS NULL OR jwt_claim = '' THEN
-        -- Check if it's a service role token
-        IF current_setting('request.jwt.claims', true)::json->>'role' = 'service_role' THEN
+    -- Prefer user_role claim (new JWT format)
+    IF user_role_claim IS NOT NULL AND user_role_claim IN ('customer', 'admin', 'delivery_staff', 'super_admin') THEN
+        RETURN user_role_claim::user_role;
+    END IF;
+
+    -- Fall back to role claim (service_role tokens, legacy JWTs)
+    IF role_claim IS NOT NULL THEN
+        IF role_claim IN ('customer', 'admin', 'delivery_staff', 'super_admin') THEN
+            RETURN role_claim::user_role;
+        ELSIF role_claim = 'service_role' THEN
             RETURN 'super_admin'::user_role;
         END IF;
-        RETURN NULL;
     END IF;
 
-    -- Handle both custom role claim and Supabase role claim
-    IF jwt_claim IN ('customer', 'admin', 'delivery_staff', 'super_admin') THEN
-        RETURN jwt_claim::user_role;
-    ELSIF jwt_claim = 'service_role' THEN
-        RETURN 'super_admin'::user_role;
-    END IF;
-
-    RETURN 'customer'::user_role;
+    RETURN NULL;
 EXCEPTION
     WHEN OTHERS THEN
         RETURN NULL;

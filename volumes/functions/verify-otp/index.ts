@@ -220,7 +220,7 @@ export async function handler(req: Request): Promise<Response> {
     const accessToken = await signJWT({
       sub: user.id,
       phone: user.phone,
-      role: user.role,
+      user_role: user.role,
     }, 3600);
 
     // Generate refresh token (30 days)

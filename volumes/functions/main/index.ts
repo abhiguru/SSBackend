@@ -30,6 +30,9 @@ Deno.serve(async (req: Request) => {
       case 'verify-otp':
         handler = (await import('../verify-otp/index.ts')).handler;
         break;
+      case 'refresh-token':
+        handler = (await import('../refresh-token/index.ts')).handler;
+        break;
       case 'checkout':
         handler = (await import('../checkout/index.ts')).handler;
         break;
@@ -55,6 +58,7 @@ Deno.serve(async (req: Request) => {
             endpoints: [
               'send-otp',
               'verify-otp',
+              'refresh-token',
               'checkout',
               'update-order-status',
               'verify-delivery-otp',
