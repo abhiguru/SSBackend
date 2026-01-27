@@ -1,11 +1,8 @@
 // Main Edge Function Router
 // Routes requests to appropriate function handlers
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-};
+import { corsHeaders } from "../_shared/cors.ts";
+import { jsonResponse, errorResponse } from "../_shared/response.ts";
 
 Deno.serve(async (req: Request) => {
   // Handle CORS preflight for all routes
@@ -48,31 +45,29 @@ Deno.serve(async (req: Request) => {
       case 'reorder':
         handler = (await import('../reorder/index.ts')).handler;
         break;
+      case 'cleanup':
+        handler = (await import('../cleanup/index.ts')).handler;
+        break;
       case 'health':
       case '':
-        return new Response(
-          JSON.stringify({
-            status: 'ok',
-            service: 'masala-functions',
-            timestamp: new Date().toISOString(),
-            endpoints: [
-              'send-otp',
-              'verify-otp',
-              'refresh-token',
-              'checkout',
-              'update-order-status',
-              'verify-delivery-otp',
-              'mark-delivery-failed',
-              'reorder',
-            ],
-          }),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return jsonResponse({
+          status: 'ok',
+          service: 'masala-functions',
+          timestamp: new Date().toISOString(),
+          endpoints: [
+            'send-otp',
+            'verify-otp',
+            'refresh-token',
+            'checkout',
+            'update-order-status',
+            'verify-delivery-otp',
+            'mark-delivery-failed',
+            'reorder',
+            'cleanup',
+          ],
+        });
       default:
-        return new Response(
-          JSON.stringify({ error: 'NOT_FOUND', message: `Unknown endpoint: ${path}` }),
-          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse('NOT_FOUND', `Unknown endpoint: ${path}`, 404);
     }
 
     const response = await handler(req);
@@ -90,9 +85,6 @@ Deno.serve(async (req: Request) => {
     });
   } catch (error) {
     console.error('Router error:', error);
-    return new Response(
-      JSON.stringify({ error: 'SERVER_ERROR', message: 'Internal server error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse('SERVER_ERROR', 'Internal server error', 500);
   }
 });

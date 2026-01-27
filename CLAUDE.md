@@ -143,6 +143,12 @@ Required in `.env`:
 - `MSG91_AUTH_KEY`, `MSG91_OTP_TEMPLATE`, `MSG91_TEMPLATE`
 - `FCM_SERVER_KEY`
 
+## CORS Configuration
+
+CORS headers are centralized in `volumes/functions/_shared/cors.ts`. The wildcard origin (`*`) is intentional: this backend serves a React Native mobile app, which does not enforce browser same-origin policy. Restricting origins would add no security benefit and would complicate development. All edge functions import CORS headers from this shared module.
+
+Shared response helpers are in `volumes/functions/_shared/response.ts` (`jsonResponse`, `errorResponse`, `handleError`).
+
 ## Key Implementation Details
 
 - Prices stored in paise (₹1 = 100 paise)

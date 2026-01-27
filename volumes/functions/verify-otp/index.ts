@@ -9,11 +9,8 @@
 
 import { getServiceClient, hashOTP, validatePhone, normalizePhone, signJWT } from "../_shared/auth.ts";
 import { getSMSConfig } from "../_shared/sms.ts";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
+import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts";
 
 interface VerifyOTPRequest {
   phone: string;
@@ -46,38 +43,26 @@ export async function handler(req: Request): Promise<Response> {
   try {
     // Only allow POST
     if (req.method !== 'POST') {
-      return new Response(
-        JSON.stringify({ error: 'METHOD_NOT_ALLOWED', message: 'Only POST requests allowed' }),
-        { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('METHOD_NOT_ALLOWED', 'Only POST requests allowed', 405);
     }
 
     // Parse request body
     const body: VerifyOTPRequest = await req.json();
 
     if (!body.phone || !body.otp) {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_INPUT', message: 'Phone and OTP are required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_INPUT', 'Phone and OTP are required', 400);
     }
 
     // Normalize and validate phone
     const phone = normalizePhone(body.phone);
 
     if (!validatePhone(phone)) {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_PHONE', message: 'Invalid phone number format' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_PHONE', 'Invalid phone number format', 400);
     }
 
     // Validate OTP format (6 digits)
     if (!/^\d{6}$/.test(body.otp)) {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_OTP', message: 'OTP must be 6 digits' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_OTP', 'OTP must be 6 digits', 400);
     }
 
     const supabase = getServiceClient();
@@ -125,10 +110,7 @@ export async function handler(req: Request): Promise<Response> {
         .single();
 
       if (otpError || !otpRequest) {
-        return new Response(
-          JSON.stringify({ error: 'OTP_EXPIRED', message: 'OTP has expired or too many attempts. Please request a new one.' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse('OTP_EXPIRED', 'OTP has expired or too many attempts. Please request a new one.', 400);
       }
 
       // Hash the provided OTP and compare
@@ -143,14 +125,12 @@ export async function handler(req: Request): Promise<Response> {
 
         const remainingAttempts = maxAttempts - otpRequest.attempts - 1;
 
-        return new Response(
-          JSON.stringify({
-            error: 'INVALID_OTP',
-            message: remainingAttempts > 0
-              ? `Invalid OTP. ${remainingAttempts} attempt(s) remaining.`
-              : 'Invalid OTP. Please request a new one.',
-          }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        return errorResponse(
+          'INVALID_OTP',
+          remainingAttempts > 0
+            ? `Invalid OTP. ${remainingAttempts} attempt(s) remaining.`
+            : 'Invalid OTP. Please request a new one.',
+          400,
         );
       }
 
@@ -193,18 +173,12 @@ export async function handler(req: Request): Promise<Response> {
 
       if (createError || !newUser) {
         console.error('Failed to create user:', createError);
-        return new Response(
-          JSON.stringify({ error: 'SERVER_ERROR', message: 'Failed to create user' }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse('SERVER_ERROR', 'Failed to create user', 500);
       }
 
       user = newUser;
     } else if (!user.is_active) {
-      return new Response(
-        JSON.stringify({ error: 'ACCOUNT_DEACTIVATED', message: 'Your account has been deactivated' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('ACCOUNT_DEACTIVATED', 'Your account has been deactivated', 403);
     }
 
     // Update user name if provided and different
@@ -252,16 +226,9 @@ export async function handler(req: Request): Promise<Response> {
       is_new_user: isNewUser,
     };
 
-    return new Response(
-      JSON.stringify(response),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonResponse(response);
   } catch (error) {
-    console.error('Verify OTP error:', error);
-    return new Response(
-      JSON.stringify({ error: 'SERVER_ERROR', message: 'An unexpected error occurred' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return handleError(error, 'Verify OTP');
   }
 }
 

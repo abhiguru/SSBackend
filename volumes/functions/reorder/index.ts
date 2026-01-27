@@ -4,11 +4,8 @@
 // Returns cart items from previous order, filtering unavailable products
 
 import { getServiceClient, requireAuth } from "../_shared/auth.ts";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
+import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts";
 
 interface ReorderRequest {
   order_id: string;
@@ -34,10 +31,7 @@ export async function handler(req: Request): Promise<Response> {
   try {
     // Only allow POST
     if (req.method !== 'POST') {
-      return new Response(
-        JSON.stringify({ error: 'METHOD_NOT_ALLOWED', message: 'Only POST requests allowed' }),
-        { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('METHOD_NOT_ALLOWED', 'Only POST requests allowed', 405);
     }
 
     // Require authentication
@@ -48,10 +42,7 @@ export async function handler(req: Request): Promise<Response> {
     const body: ReorderRequest = await req.json();
 
     if (!body.order_id) {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_INPUT', message: 'order_id is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_INPUT', 'order_id is required', 400);
     }
 
     // Get the original order
@@ -62,18 +53,12 @@ export async function handler(req: Request): Promise<Response> {
       .single();
 
     if (orderError || !order) {
-      return new Response(
-        JSON.stringify({ error: 'ORDER_NOT_FOUND', message: 'Order not found' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('ORDER_NOT_FOUND', 'Order not found', 404);
     }
 
     // Verify order belongs to the user
     if (order.user_id !== auth.userId) {
-      return new Response(
-        JSON.stringify({ error: 'UNAUTHORIZED', message: 'This order does not belong to you' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('UNAUTHORIZED', 'This order does not belong to you', 403);
     }
 
     // Get order items
@@ -83,10 +68,7 @@ export async function handler(req: Request): Promise<Response> {
       .eq('order_id', body.order_id);
 
     if (itemsError || !orderItems || orderItems.length === 0) {
-      return new Response(
-        JSON.stringify({ error: 'NO_ITEMS', message: 'No items found in this order' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('NO_ITEMS', 'No items found in this order', 404);
     }
 
     // Get current product and weight option availability
@@ -148,33 +130,19 @@ export async function handler(req: Request): Promise<Response> {
       0
     );
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        original_order_number: order.order_number,
-        cart_items: cartItems,
-        available_items: availableItems,
-        unavailable_items: unavailableItems,
-        subtotal_paise: subtotalPaise,
-        message: unavailableItems.length > 0
-          ? `${unavailableItems.length} item(s) are no longer available`
-          : 'All items are available',
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonResponse({
+      success: true,
+      original_order_number: order.order_number,
+      cart_items: cartItems,
+      available_items: availableItems,
+      unavailable_items: unavailableItems,
+      subtotal_paise: subtotalPaise,
+      message: unavailableItems.length > 0
+        ? `${unavailableItems.length} item(s) are no longer available`
+        : 'All items are available',
+    });
   } catch (error) {
-    if (error instanceof Error && error.name === 'AuthError') {
-      return new Response(
-        JSON.stringify({ error: 'UNAUTHORIZED', message: error.message }),
-        { status: (error as { status?: number }).status || 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    console.error('Reorder error:', error);
-    return new Response(
-      JSON.stringify({ error: 'SERVER_ERROR', message: 'An unexpected error occurred' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return handleError(error, 'Reorder');
   }
 }
 

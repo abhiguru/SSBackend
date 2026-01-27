@@ -5,11 +5,8 @@
 import { getServiceClient, requireAdmin, generateDeliveryOTP, hashOTP } from "../_shared/auth.ts";
 import { sendOrderPush, sendDeliveryAssignmentPush } from "../_shared/push.ts";
 import { sendOrderStatusSMS, sendDeliveryOTP as sendDeliveryOTPSMS } from "../_shared/sms.ts";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
+import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts";
 
 interface UpdateStatusRequest {
   order_id: string;
@@ -38,10 +35,7 @@ export async function handler(req: Request): Promise<Response> {
   try {
     // Only allow POST
     if (req.method !== 'POST') {
-      return new Response(
-        JSON.stringify({ error: 'METHOD_NOT_ALLOWED', message: 'Only POST requests allowed' }),
-        { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('METHOD_NOT_ALLOWED', 'Only POST requests allowed', 405);
     }
 
     // Require admin authentication
@@ -52,10 +46,7 @@ export async function handler(req: Request): Promise<Response> {
     const body: UpdateStatusRequest = await req.json();
 
     if (!body.order_id || !body.status) {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_INPUT', message: 'order_id and status are required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_INPUT', 'order_id and status are required', 400);
     }
 
     // Get current order
@@ -66,10 +57,7 @@ export async function handler(req: Request): Promise<Response> {
       .single();
 
     if (orderError || !order) {
-      return new Response(
-        JSON.stringify({ error: 'ORDER_NOT_FOUND', message: 'Order not found' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('ORDER_NOT_FOUND', 'Order not found', 404);
     }
 
     // Validate status transition
@@ -78,13 +66,11 @@ export async function handler(req: Request): Promise<Response> {
 
     const allowedTransitions = validTransitions[currentStatus] || [];
     if (!allowedTransitions.includes(newStatus)) {
-      return new Response(
-        JSON.stringify({
-          error: 'INVALID_TRANSITION',
-          message: `Cannot change status from ${currentStatus} to ${newStatus}`,
-          allowed_transitions: allowedTransitions,
-        }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      return errorResponse(
+        'INVALID_TRANSITION',
+        `Cannot change status from ${currentStatus} to ${newStatus}`,
+        400,
+        { allowed_transitions: allowedTransitions },
       );
     }
 
@@ -97,10 +83,7 @@ export async function handler(req: Request): Promise<Response> {
     if (newStatus === 'out_for_delivery') {
       // Require delivery staff
       if (!body.delivery_staff_id) {
-        return new Response(
-          JSON.stringify({ error: 'MISSING_DELIVERY_STAFF', message: 'Delivery staff must be assigned' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse('MISSING_DELIVERY_STAFF', 'Delivery staff must be assigned', 400);
       }
 
       // Verify delivery staff exists and has correct role
@@ -111,24 +94,15 @@ export async function handler(req: Request): Promise<Response> {
         .single();
 
       if (staffError || !deliveryStaff) {
-        return new Response(
-          JSON.stringify({ error: 'INVALID_DELIVERY_STAFF', message: 'Delivery staff not found' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse('INVALID_DELIVERY_STAFF', 'Delivery staff not found', 400);
       }
 
       if (deliveryStaff.role !== 'delivery_staff') {
-        return new Response(
-          JSON.stringify({ error: 'INVALID_DELIVERY_STAFF', message: 'User is not a delivery staff member' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse('INVALID_DELIVERY_STAFF', 'User is not a delivery staff member', 400);
       }
 
       if (!deliveryStaff.is_active) {
-        return new Response(
-          JSON.stringify({ error: 'INVALID_DELIVERY_STAFF', message: 'Delivery staff account is deactivated' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse('INVALID_DELIVERY_STAFF', 'Delivery staff account is deactivated', 400);
       }
 
       // Generate delivery OTP
@@ -172,10 +146,7 @@ export async function handler(req: Request): Promise<Response> {
 
     if (updateError) {
       console.error('Failed to update order:', updateError);
-      return new Response(
-        JSON.stringify({ error: 'SERVER_ERROR', message: 'Failed to update order' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('SERVER_ERROR', 'Failed to update order', 500);
     }
 
     // Record status history
@@ -194,32 +165,18 @@ export async function handler(req: Request): Promise<Response> {
     sendOrderStatusSMS(customerPhone, order.order_number, newStatus).catch(console.error);
     sendOrderPush(order.user_id, order.order_number, newStatus).catch(console.error);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        order: {
-          id: updatedOrder.id,
-          order_number: updatedOrder.order_number,
-          status: updatedOrder.status,
-          previous_status: currentStatus,
-        },
-        message: `Order status updated to ${newStatus}`,
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonResponse({
+      success: true,
+      order: {
+        id: updatedOrder.id,
+        order_number: updatedOrder.order_number,
+        status: updatedOrder.status,
+        previous_status: currentStatus,
+      },
+      message: `Order status updated to ${newStatus}`,
+    });
   } catch (error) {
-    if (error instanceof Error && error.name === 'AuthError') {
-      return new Response(
-        JSON.stringify({ error: 'UNAUTHORIZED', message: error.message }),
-        { status: (error as { status?: number }).status || 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    console.error('Update order status error:', error);
-    return new Response(
-      JSON.stringify({ error: 'SERVER_ERROR', message: 'An unexpected error occurred' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return handleError(error, 'Update order status');
   }
 }
 

@@ -329,8 +329,8 @@ ALTER TABLE sms_config ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Admin can manage sms_config"
     ON sms_config FOR ALL
     TO authenticated
-    USING (auth.is_admin())
-    WITH CHECK (auth.is_admin());
+    USING ((select auth.is_admin()))
+    WITH CHECK ((select auth.is_admin()));
 
 -- Allow service role full access
 CREATE POLICY "Service role can manage sms_config"
@@ -363,8 +363,8 @@ ALTER TABLE test_otp_records ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Admin can manage test_otp_records"
     ON test_otp_records FOR ALL
     TO authenticated
-    USING (auth.is_admin())
-    WITH CHECK (auth.is_admin());
+    USING ((select auth.is_admin()))
+    WITH CHECK ((select auth.is_admin()));
 
 CREATE POLICY "Service role can manage test_otp_records"
     ON test_otp_records FOR ALL

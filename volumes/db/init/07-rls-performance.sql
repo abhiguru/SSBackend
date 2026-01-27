@@ -1,32 +1,21 @@
 -- =============================================
--- Masala Spice Shop - Row Level Security Policies
+-- Masala Spice Shop - RLS Performance Optimizations
 -- =============================================
--- Optimized with Supabase best practices:
--- - (select ...) wrappers on auth functions for initPlan caching
--- - SECURITY DEFINER helpers to avoid cascading RLS
--- - Explicit role targeting (TO anon/authenticated)
+-- Applies Supabase best practices:
+-- 1A. Wrap auth functions in (select ...) for initPlan caching
+-- 1B. SECURITY DEFINER helpers to eliminate cascading RLS
+-- 1C. Explicit role targeting on policies
+-- 1D. Expired data cleanup function
+-- 1E. Missing app_settings updated_at trigger
+--
 -- Reference: https://supabase.com/docs/guides/troubleshooting/rls-performance-and-best-practices-Z5Jjwv
 
--- Enable RLS on all tables
-ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE otp_requests ENABLE ROW LEVEL SECURITY;
-ALTER TABLE refresh_tokens ENABLE ROW LEVEL SECURITY;
-ALTER TABLE push_tokens ENABLE ROW LEVEL SECURITY;
-ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE products ENABLE ROW LEVEL SECURITY;
-ALTER TABLE weight_options ENABLE ROW LEVEL SECURITY;
-ALTER TABLE user_addresses ENABLE ROW LEVEL SECURITY;
-ALTER TABLE favorites ENABLE ROW LEVEL SECURITY;
-ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
-ALTER TABLE order_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE order_status_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE daily_order_counters ENABLE ROW LEVEL SECURITY;
+BEGIN;
 
 -- =============================================
--- SECURITY DEFINER HELPER FUNCTIONS
+-- 1B. SECURITY DEFINER HELPER FUNCTIONS
 -- =============================================
--- Bypass RLS on parent tables to eliminate cascading RLS evaluation.
+-- These bypass RLS on parent tables to eliminate cascading RLS evaluation.
 
 CREATE OR REPLACE FUNCTION public.is_product_visible(p_product_id UUID)
 RETURNS BOOLEAN AS $$
@@ -62,7 +51,7 @@ GRANT EXECUTE ON FUNCTION public.user_owns_order(UUID, UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.delivery_assigned_order(UUID, UUID) TO authenticated;
 
 -- =============================================
--- CLEANUP EXPIRED DATA FUNCTION
+-- 1D. CLEANUP EXPIRED DATA FUNCTION
 -- =============================================
 
 CREATE OR REPLACE FUNCTION public.cleanup_expired_data()
@@ -73,19 +62,23 @@ DECLARE
     v_phone_rate_deleted INTEGER;
     v_ip_rate_deleted INTEGER;
 BEGIN
+    -- Delete OTP requests older than 24 hours
     DELETE FROM otp_requests
     WHERE created_at < NOW() - INTERVAL '24 hours';
     GET DIAGNOSTICS v_otp_deleted = ROW_COUNT;
 
+    -- Delete revoked or expired refresh tokens older than 7 days
     DELETE FROM refresh_tokens
     WHERE (revoked = true OR expires_at < NOW())
       AND created_at < NOW() - INTERVAL '7 days';
     GET DIAGNOSTICS v_tokens_deleted = ROW_COUNT;
 
+    -- Delete stale phone rate limit records older than 48 hours
     DELETE FROM otp_rate_limits
     WHERE updated_at < NOW() - INTERVAL '48 hours';
     GET DIAGNOSTICS v_phone_rate_deleted = ROW_COUNT;
 
+    -- Delete stale IP rate limit records older than 48 hours
     DELETE FROM ip_rate_limits
     WHERE updated_at < NOW() - INTERVAL '48 hours';
     GET DIAGNOSTICS v_ip_rate_deleted = ROW_COUNT;
@@ -103,69 +96,73 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION public.cleanup_expired_data() TO service_role;
 
 -- =============================================
+-- 1E. MISSING app_settings UPDATED_AT TRIGGER
+-- =============================================
+
+CREATE OR REPLACE TRIGGER update_app_settings_updated_at
+    BEFORE UPDATE ON app_settings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- =============================================
+-- 1A + 1C. REWRITE ALL RLS POLICIES
+-- =============================================
+-- Drop and recreate with (select ...) wrappers and role targeting.
+
+-- =============================================
 -- USERS
 -- =============================================
 
--- Users can read their own profile
+DROP POLICY IF EXISTS "users_read_own" ON users;
 CREATE POLICY "users_read_own" ON users
     FOR SELECT TO authenticated
     USING (id = (select auth.uid()));
 
--- Users can update their own profile (name only)
+DROP POLICY IF EXISTS "users_update_own" ON users;
 CREATE POLICY "users_update_own" ON users
     FOR UPDATE TO authenticated
     USING (id = (select auth.uid()))
     WITH CHECK (id = (select auth.uid()));
 
--- Admin can read all users
+DROP POLICY IF EXISTS "users_admin_read" ON users;
 CREATE POLICY "users_admin_read" ON users
     FOR SELECT TO authenticated
     USING ((select auth.is_admin()));
 
--- Admin can update users (role, is_active)
+DROP POLICY IF EXISTS "users_admin_update" ON users;
 CREATE POLICY "users_admin_update" ON users
     FOR UPDATE TO authenticated
     USING ((select auth.is_admin()));
 
--- Super admin can insert users
+DROP POLICY IF EXISTS "users_superadmin_insert" ON users;
 CREATE POLICY "users_superadmin_insert" ON users
     FOR INSERT TO authenticated
     WITH CHECK ((select auth.is_super_admin()));
 
 -- =============================================
--- OTP_REQUESTS (service role only via edge functions)
--- =============================================
-
--- No public access - handled by edge functions with service role
-
--- =============================================
--- REFRESH_TOKENS (service role only)
--- =============================================
-
--- No public access - handled by edge functions
-
--- =============================================
 -- PUSH_TOKENS
 -- =============================================
 
--- Users can manage their own push tokens
+DROP POLICY IF EXISTS "push_read_own" ON push_tokens;
 CREATE POLICY "push_read_own" ON push_tokens
     FOR SELECT TO authenticated
     USING (user_id = (select auth.uid()));
 
+DROP POLICY IF EXISTS "push_insert_own" ON push_tokens;
 CREATE POLICY "push_insert_own" ON push_tokens
     FOR INSERT TO authenticated
     WITH CHECK (user_id = (select auth.uid()));
 
+DROP POLICY IF EXISTS "push_update_own" ON push_tokens;
 CREATE POLICY "push_update_own" ON push_tokens
     FOR UPDATE TO authenticated
     USING (user_id = (select auth.uid()));
 
+DROP POLICY IF EXISTS "push_delete_own" ON push_tokens;
 CREATE POLICY "push_delete_own" ON push_tokens
     FOR DELETE TO authenticated
     USING (user_id = (select auth.uid()));
 
--- Admin can read all push tokens (for notifications)
+DROP POLICY IF EXISTS "push_admin_read" ON push_tokens;
 CREATE POLICY "push_admin_read" ON push_tokens
     FOR SELECT TO authenticated
     USING ((select auth.is_admin()));
@@ -174,27 +171,27 @@ CREATE POLICY "push_admin_read" ON push_tokens
 -- CATEGORIES
 -- =============================================
 
--- Public can read active categories
+DROP POLICY IF EXISTS "categories_public_read" ON categories;
 CREATE POLICY "categories_public_read" ON categories
     FOR SELECT TO anon, authenticated
     USING (is_active = true);
 
--- Admin can read all categories
+DROP POLICY IF EXISTS "categories_admin_read" ON categories;
 CREATE POLICY "categories_admin_read" ON categories
     FOR SELECT TO authenticated
     USING ((select auth.is_admin()));
 
--- Admin can insert categories
+DROP POLICY IF EXISTS "categories_admin_insert" ON categories;
 CREATE POLICY "categories_admin_insert" ON categories
     FOR INSERT TO authenticated
     WITH CHECK ((select auth.is_admin()));
 
--- Admin can update categories
+DROP POLICY IF EXISTS "categories_admin_update" ON categories;
 CREATE POLICY "categories_admin_update" ON categories
     FOR UPDATE TO authenticated
     USING ((select auth.is_admin()));
 
--- Admin can delete categories (soft delete preferred)
+DROP POLICY IF EXISTS "categories_admin_delete" ON categories;
 CREATE POLICY "categories_admin_delete" ON categories
     FOR DELETE TO authenticated
     USING ((select auth.is_admin()));
@@ -203,27 +200,27 @@ CREATE POLICY "categories_admin_delete" ON categories
 -- PRODUCTS
 -- =============================================
 
--- Public can read available, active products
+DROP POLICY IF EXISTS "products_public_read" ON products;
 CREATE POLICY "products_public_read" ON products
     FOR SELECT TO anon, authenticated
     USING (is_available = true AND is_active = true);
 
--- Admin can read all products
+DROP POLICY IF EXISTS "products_admin_read" ON products;
 CREATE POLICY "products_admin_read" ON products
     FOR SELECT TO authenticated
     USING ((select auth.is_admin()));
 
--- Admin can insert products
+DROP POLICY IF EXISTS "products_admin_insert" ON products;
 CREATE POLICY "products_admin_insert" ON products
     FOR INSERT TO authenticated
     WITH CHECK ((select auth.is_admin()));
 
--- Admin can update products
+DROP POLICY IF EXISTS "products_admin_update" ON products;
 CREATE POLICY "products_admin_update" ON products
     FOR UPDATE TO authenticated
     USING ((select auth.is_admin()));
 
--- Admin can delete products
+DROP POLICY IF EXISTS "products_admin_delete" ON products;
 CREATE POLICY "products_admin_delete" ON products
     FOR DELETE TO authenticated
     USING ((select auth.is_admin()));
@@ -232,7 +229,7 @@ CREATE POLICY "products_admin_delete" ON products
 -- WEIGHT_OPTIONS
 -- =============================================
 
--- Public can read available weight options for available products
+DROP POLICY IF EXISTS "weight_options_public_read" ON weight_options;
 CREATE POLICY "weight_options_public_read" ON weight_options
     FOR SELECT TO anon, authenticated
     USING (
@@ -240,20 +237,22 @@ CREATE POLICY "weight_options_public_read" ON weight_options
         AND is_product_visible(product_id)
     );
 
--- Admin can read all weight options
+DROP POLICY IF EXISTS "weight_options_admin_read" ON weight_options;
 CREATE POLICY "weight_options_admin_read" ON weight_options
     FOR SELECT TO authenticated
     USING ((select auth.is_admin()));
 
--- Admin can manage weight options
+DROP POLICY IF EXISTS "weight_options_admin_insert" ON weight_options;
 CREATE POLICY "weight_options_admin_insert" ON weight_options
     FOR INSERT TO authenticated
     WITH CHECK ((select auth.is_admin()));
 
+DROP POLICY IF EXISTS "weight_options_admin_update" ON weight_options;
 CREATE POLICY "weight_options_admin_update" ON weight_options
     FOR UPDATE TO authenticated
     USING ((select auth.is_admin()));
 
+DROP POLICY IF EXISTS "weight_options_admin_delete" ON weight_options;
 CREATE POLICY "weight_options_admin_delete" ON weight_options
     FOR DELETE TO authenticated
     USING ((select auth.is_admin()));
@@ -262,24 +261,27 @@ CREATE POLICY "weight_options_admin_delete" ON weight_options
 -- USER_ADDRESSES
 -- =============================================
 
--- Users can manage their own addresses
+DROP POLICY IF EXISTS "addresses_read_own" ON user_addresses;
 CREATE POLICY "addresses_read_own" ON user_addresses
     FOR SELECT TO authenticated
     USING (user_id = (select auth.uid()));
 
+DROP POLICY IF EXISTS "addresses_insert_own" ON user_addresses;
 CREATE POLICY "addresses_insert_own" ON user_addresses
     FOR INSERT TO authenticated
     WITH CHECK (user_id = (select auth.uid()));
 
+DROP POLICY IF EXISTS "addresses_update_own" ON user_addresses;
 CREATE POLICY "addresses_update_own" ON user_addresses
     FOR UPDATE TO authenticated
     USING (user_id = (select auth.uid()));
 
+DROP POLICY IF EXISTS "addresses_delete_own" ON user_addresses;
 CREATE POLICY "addresses_delete_own" ON user_addresses
     FOR DELETE TO authenticated
     USING (user_id = (select auth.uid()));
 
--- Admin can read all addresses
+DROP POLICY IF EXISTS "addresses_admin_read" ON user_addresses;
 CREATE POLICY "addresses_admin_read" ON user_addresses
     FOR SELECT TO authenticated
     USING ((select auth.is_admin()));
@@ -288,15 +290,17 @@ CREATE POLICY "addresses_admin_read" ON user_addresses
 -- FAVORITES
 -- =============================================
 
--- Users can manage their own favorites
+DROP POLICY IF EXISTS "favorites_read_own" ON favorites;
 CREATE POLICY "favorites_read_own" ON favorites
     FOR SELECT TO authenticated
     USING (user_id = (select auth.uid()));
 
+DROP POLICY IF EXISTS "favorites_insert_own" ON favorites;
 CREATE POLICY "favorites_insert_own" ON favorites
     FOR INSERT TO authenticated
     WITH CHECK (user_id = (select auth.uid()));
 
+DROP POLICY IF EXISTS "favorites_delete_own" ON favorites;
 CREATE POLICY "favorites_delete_own" ON favorites
     FOR DELETE TO authenticated
     USING (user_id = (select auth.uid()));
@@ -305,22 +309,22 @@ CREATE POLICY "favorites_delete_own" ON favorites
 -- ORDERS
 -- =============================================
 
--- Users can read their own orders
+DROP POLICY IF EXISTS "orders_read_own" ON orders;
 CREATE POLICY "orders_read_own" ON orders
     FOR SELECT TO authenticated
     USING (user_id = (select auth.uid()));
 
--- Admin can read all orders
+DROP POLICY IF EXISTS "orders_admin_read" ON orders;
 CREATE POLICY "orders_admin_read" ON orders
     FOR SELECT TO authenticated
     USING ((select auth.is_admin()));
 
--- Admin can update orders
+DROP POLICY IF EXISTS "orders_admin_update" ON orders;
 CREATE POLICY "orders_admin_update" ON orders
     FOR UPDATE TO authenticated
     USING ((select auth.is_admin()));
 
--- Delivery staff can read their assigned orders
+DROP POLICY IF EXISTS "orders_delivery_read" ON orders;
 CREATE POLICY "orders_delivery_read" ON orders
     FOR SELECT TO authenticated
     USING (
@@ -329,7 +333,7 @@ CREATE POLICY "orders_delivery_read" ON orders
         AND status = 'out_for_delivery'
     );
 
--- Delivery staff can update their assigned orders (limited fields via edge function)
+DROP POLICY IF EXISTS "orders_delivery_update" ON orders;
 CREATE POLICY "orders_delivery_update" ON orders
     FOR UPDATE TO authenticated
     USING (
@@ -342,17 +346,17 @@ CREATE POLICY "orders_delivery_update" ON orders
 -- ORDER_ITEMS
 -- =============================================
 
--- Users can read items of their own orders
+DROP POLICY IF EXISTS "order_items_read_own" ON order_items;
 CREATE POLICY "order_items_read_own" ON order_items
     FOR SELECT TO authenticated
     USING (user_owns_order(order_id, (select auth.uid())));
 
--- Admin can read all order items
+DROP POLICY IF EXISTS "order_items_admin_read" ON order_items;
 CREATE POLICY "order_items_admin_read" ON order_items
     FOR SELECT TO authenticated
     USING ((select auth.is_admin()));
 
--- Delivery staff can read items of assigned orders
+DROP POLICY IF EXISTS "order_items_delivery_read" ON order_items;
 CREATE POLICY "order_items_delivery_read" ON order_items
     FOR SELECT TO authenticated
     USING (delivery_assigned_order(order_id, (select auth.uid())));
@@ -361,17 +365,17 @@ CREATE POLICY "order_items_delivery_read" ON order_items
 -- ORDER_STATUS_HISTORY
 -- =============================================
 
--- Users can read history of their own orders
+DROP POLICY IF EXISTS "status_history_read_own" ON order_status_history;
 CREATE POLICY "status_history_read_own" ON order_status_history
     FOR SELECT TO authenticated
     USING (user_owns_order(order_id, (select auth.uid())));
 
--- Admin can read all history
+DROP POLICY IF EXISTS "status_history_admin_read" ON order_status_history;
 CREATE POLICY "status_history_admin_read" ON order_status_history
     FOR SELECT TO authenticated
     USING ((select auth.is_admin()));
 
--- Admin can insert history
+DROP POLICY IF EXISTS "status_history_admin_insert" ON order_status_history;
 CREATE POLICY "status_history_admin_insert" ON order_status_history
     FOR INSERT TO authenticated
     WITH CHECK ((select auth.is_admin()));
@@ -380,60 +384,39 @@ CREATE POLICY "status_history_admin_insert" ON order_status_history
 -- APP_SETTINGS
 -- =============================================
 
--- Public can read app settings (shipping, pincodes, etc.)
+DROP POLICY IF EXISTS "settings_public_read" ON app_settings;
 CREATE POLICY "settings_public_read" ON app_settings
     FOR SELECT TO anon, authenticated
     USING (true);
 
--- Admin can update settings
+DROP POLICY IF EXISTS "settings_admin_update" ON app_settings;
 CREATE POLICY "settings_admin_update" ON app_settings
     FOR UPDATE TO authenticated
     USING ((select auth.is_admin()));
 
--- Super admin can insert settings
+DROP POLICY IF EXISTS "settings_superadmin_insert" ON app_settings;
 CREATE POLICY "settings_superadmin_insert" ON app_settings
     FOR INSERT TO authenticated
     WITH CHECK ((select auth.is_super_admin()));
 
 -- =============================================
--- DAILY_ORDER_COUNTERS (service role only)
+-- SMS_CONFIG (from 05-auth-enhancements.sql)
 -- =============================================
 
--- No public access - used internally by generate_order_number()
+DROP POLICY IF EXISTS "Admin can manage sms_config" ON sms_config;
+CREATE POLICY "Admin can manage sms_config" ON sms_config
+    FOR ALL TO authenticated
+    USING ((select auth.is_admin()))
+    WITH CHECK ((select auth.is_admin()));
 
 -- =============================================
--- GRANT TABLE PERMISSIONS
+-- TEST_OTP_RECORDS (from 05-auth-enhancements.sql)
 -- =============================================
 
--- Grant usage on public schema
-GRANT USAGE ON SCHEMA public TO anon, authenticated;
+DROP POLICY IF EXISTS "Admin can manage test_otp_records" ON test_otp_records;
+CREATE POLICY "Admin can manage test_otp_records" ON test_otp_records
+    FOR ALL TO authenticated
+    USING ((select auth.is_admin()))
+    WITH CHECK ((select auth.is_admin()));
 
--- Grant select on public read tables
-GRANT SELECT ON categories TO anon, authenticated;
-GRANT SELECT ON products TO anon, authenticated;
-GRANT SELECT ON weight_options TO anon, authenticated;
-GRANT SELECT ON app_settings TO anon, authenticated;
-
--- Grant full access on user-owned tables
-GRANT SELECT, INSERT, UPDATE, DELETE ON user_addresses TO authenticated;
-GRANT SELECT, INSERT, DELETE ON favorites TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON push_tokens TO authenticated;
-
--- Grant select on order tables
-GRANT SELECT ON orders TO authenticated;
-GRANT SELECT ON order_items TO authenticated;
-GRANT SELECT ON order_status_history TO authenticated;
-
--- Grant select on users (filtered by RLS)
-GRANT SELECT, UPDATE ON users TO authenticated;
-
--- Grant sequence usage
-GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO authenticated;
-
--- =============================================
--- app_settings UPDATED_AT TRIGGER
--- =============================================
-
-CREATE OR REPLACE TRIGGER update_app_settings_updated_at
-    BEFORE UPDATE ON app_settings
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+COMMIT;

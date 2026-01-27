@@ -4,11 +4,8 @@
 
 import { getServiceClient, requireAuth } from "../_shared/auth.ts";
 import { sendNewOrderPushToAdmins } from "../_shared/push.ts";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
+import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts";
 
 interface CartItem {
   product_id: string;
@@ -31,10 +28,7 @@ export async function handler(req: Request): Promise<Response> {
   try {
     // Only allow POST
     if (req.method !== 'POST') {
-      return new Response(
-        JSON.stringify({ error: 'METHOD_NOT_ALLOWED', message: 'Only POST requests allowed' }),
-        { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('METHOD_NOT_ALLOWED', 'Only POST requests allowed', 405);
     }
 
     // Require authentication
@@ -46,17 +40,11 @@ export async function handler(req: Request): Promise<Response> {
 
     // Validate input
     if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
-      return new Response(
-        JSON.stringify({ error: 'EMPTY_CART', message: 'Cart is empty' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('EMPTY_CART', 'Cart is empty', 400);
     }
 
     if (!body.address_id) {
-      return new Response(
-        JSON.stringify({ error: 'MISSING_ADDRESS', message: 'Delivery address is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('MISSING_ADDRESS', 'Delivery address is required', 400);
     }
 
     // Get address
@@ -68,10 +56,7 @@ export async function handler(req: Request): Promise<Response> {
       .single();
 
     if (addressError || !address) {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_ADDRESS', message: 'Invalid delivery address' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_ADDRESS', 'Invalid delivery address', 400);
     }
 
     // Check pincode serviceability
@@ -86,12 +71,10 @@ export async function handler(req: Request): Promise<Response> {
       : [];
 
     if (serviceablePincodes.length > 0 && !serviceablePincodes.includes(address.pincode)) {
-      return new Response(
-        JSON.stringify({
-          error: 'PINCODE_NOT_SERVICEABLE',
-          message: `Sorry, we don't deliver to pincode ${address.pincode} yet`,
-        }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      return errorResponse(
+        'PINCODE_NOT_SERVICEABLE',
+        `Sorry, we don't deliver to pincode ${address.pincode} yet`,
+        400,
       );
     }
 
@@ -116,10 +99,7 @@ export async function handler(req: Request): Promise<Response> {
       .in('id', weightOptionIds);
 
     if (woError || !weightOptions) {
-      return new Response(
-        JSON.stringify({ error: 'SERVER_ERROR', message: 'Failed to fetch product data' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('SERVER_ERROR', 'Failed to fetch product data', 500);
     }
 
     // Create lookup map
@@ -144,10 +124,7 @@ export async function handler(req: Request): Promise<Response> {
       const wo = woMap.get(item.weight_option_id);
 
       if (!wo) {
-        return new Response(
-          JSON.stringify({ error: 'INVALID_ITEM', message: `Product variant not found` }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse('INVALID_ITEM', 'Product variant not found', 400);
       }
 
       const product = wo.product as { id: string; name: string; name_gu: string | null; is_available: boolean; is_active: boolean };
@@ -160,10 +137,7 @@ export async function handler(req: Request): Promise<Response> {
 
       // Validate quantity
       if (item.quantity < 1 || item.quantity > 100) {
-        return new Response(
-          JSON.stringify({ error: 'INVALID_QUANTITY', message: `Invalid quantity for ${product.name}` }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse('INVALID_QUANTITY', `Invalid quantity for ${product.name}`, 400);
       }
 
       orderItems.push({
@@ -180,21 +154,16 @@ export async function handler(req: Request): Promise<Response> {
     }
 
     if (unavailableItems.length > 0) {
-      return new Response(
-        JSON.stringify({
-          error: 'ITEMS_UNAVAILABLE',
-          message: `Some items are no longer available: ${unavailableItems.join(', ')}`,
-          unavailable_items: unavailableItems,
-        }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      return errorResponse(
+        'ITEMS_UNAVAILABLE',
+        `Some items are no longer available: ${unavailableItems.join(', ')}`,
+        400,
+        { unavailable_items: unavailableItems },
       );
     }
 
     if (orderItems.length === 0) {
-      return new Response(
-        JSON.stringify({ error: 'EMPTY_CART', message: 'No available items in cart' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('EMPTY_CART', 'No available items in cart', 400);
     }
 
     // Calculate subtotal
@@ -217,14 +186,11 @@ export async function handler(req: Request): Promise<Response> {
 
     // Check minimum order
     if (subtotalPaise < minOrder) {
-      return new Response(
-        JSON.stringify({
-          error: 'MIN_ORDER_NOT_MET',
-          message: `Minimum order amount is ₹${(minOrder / 100).toFixed(2)}`,
-          min_order_paise: minOrder,
-          current_total_paise: subtotalPaise,
-        }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      return errorResponse(
+        'MIN_ORDER_NOT_MET',
+        `Minimum order amount is ₹${(minOrder / 100).toFixed(2)}`,
+        400,
+        { min_order_paise: minOrder, current_total_paise: subtotalPaise },
       );
     }
 
@@ -238,10 +204,7 @@ export async function handler(req: Request): Promise<Response> {
 
     if (onError || !orderNumber) {
       console.error('Failed to generate order number:', onError);
-      return new Response(
-        JSON.stringify({ error: 'SERVER_ERROR', message: 'Failed to create order' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('SERVER_ERROR', 'Failed to create order', 500);
     }
 
     // Create order
@@ -268,10 +231,7 @@ export async function handler(req: Request): Promise<Response> {
 
     if (orderError || !order) {
       console.error('Failed to create order:', orderError);
-      return new Response(
-        JSON.stringify({ error: 'SERVER_ERROR', message: 'Failed to create order' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('SERVER_ERROR', 'Failed to create order', 500);
     }
 
     // Create order items
@@ -311,35 +271,21 @@ export async function handler(req: Request): Promise<Response> {
     const totalFormatted = `₹${(totalPaise / 100).toFixed(2)}`;
     sendNewOrderPushToAdmins(orderNumber, totalFormatted).catch(console.error);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        order: {
-          id: order.id,
-          order_number: order.order_number,
-          status: order.status,
-          subtotal_paise: subtotalPaise,
-          shipping_paise: shippingPaise,
-          total_paise: totalPaise,
-          created_at: order.created_at,
-        },
-        message: 'Order placed successfully',
-      }),
-      { status: 201, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonResponse({
+      success: true,
+      order: {
+        id: order.id,
+        order_number: order.order_number,
+        status: order.status,
+        subtotal_paise: subtotalPaise,
+        shipping_paise: shippingPaise,
+        total_paise: totalPaise,
+        created_at: order.created_at,
+      },
+      message: 'Order placed successfully',
+    }, 201);
   } catch (error) {
-    if (error instanceof Error && error.name === 'AuthError') {
-      return new Response(
-        JSON.stringify({ error: 'UNAUTHORIZED', message: error.message }),
-        { status: (error as { status?: number }).status || 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    console.error('Checkout error:', error);
-    return new Response(
-      JSON.stringify({ error: 'SERVER_ERROR', message: 'An unexpected error occurred' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return handleError(error, 'Checkout');
   }
 }
 

@@ -5,11 +5,8 @@
 import { getServiceClient, requireDeliveryStaff, hashOTP } from "../_shared/auth.ts";
 import { sendOrderPush } from "../_shared/push.ts";
 import { sendOrderStatusSMS } from "../_shared/sms.ts";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
+import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts";
 
 interface VerifyDeliveryRequest {
   order_id: string;
@@ -25,10 +22,7 @@ export async function handler(req: Request): Promise<Response> {
   try {
     // Only allow POST
     if (req.method !== 'POST') {
-      return new Response(
-        JSON.stringify({ error: 'METHOD_NOT_ALLOWED', message: 'Only POST requests allowed' }),
-        { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('METHOD_NOT_ALLOWED', 'Only POST requests allowed', 405);
     }
 
     // Require delivery staff authentication
@@ -39,18 +33,12 @@ export async function handler(req: Request): Promise<Response> {
     const body: VerifyDeliveryRequest = await req.json();
 
     if (!body.order_id || !body.otp) {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_INPUT', message: 'order_id and otp are required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_INPUT', 'order_id and otp are required', 400);
     }
 
     // Validate OTP format (4 digits)
     if (!/^\d{4}$/.test(body.otp)) {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_OTP', message: 'OTP must be 4 digits' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_OTP', 'OTP must be 4 digits', 400);
     }
 
     // Get order
@@ -61,51 +49,33 @@ export async function handler(req: Request): Promise<Response> {
       .single();
 
     if (orderError || !order) {
-      return new Response(
-        JSON.stringify({ error: 'ORDER_NOT_FOUND', message: 'Order not found' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('ORDER_NOT_FOUND', 'Order not found', 404);
     }
 
     // Verify this order is assigned to the requesting delivery staff
     if (order.delivery_staff_id !== auth.userId) {
-      return new Response(
-        JSON.stringify({ error: 'NOT_ASSIGNED', message: 'This order is not assigned to you' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('NOT_ASSIGNED', 'This order is not assigned to you', 403);
     }
 
     // Verify order is in correct status
     if (order.status !== 'out_for_delivery') {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_STATUS', message: `Order is ${order.status}, not out for delivery` }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_STATUS', `Order is ${order.status}, not out for delivery`, 400);
     }
 
     // Check OTP expiry
     if (!order.delivery_otp_hash || !order.delivery_otp_expires) {
-      return new Response(
-        JSON.stringify({ error: 'NO_OTP', message: 'Delivery OTP not set for this order' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('NO_OTP', 'Delivery OTP not set for this order', 400);
     }
 
     if (new Date(order.delivery_otp_expires) < new Date()) {
-      return new Response(
-        JSON.stringify({ error: 'OTP_EXPIRED', message: 'Delivery OTP has expired. Please contact admin.' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('OTP_EXPIRED', 'Delivery OTP has expired. Please contact admin.', 400);
     }
 
     // Verify OTP
     const otpHash = await hashOTP(body.otp);
 
     if (otpHash !== order.delivery_otp_hash) {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_OTP', message: 'Invalid delivery OTP' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_OTP', 'Invalid delivery OTP', 400);
     }
 
     // Update order to delivered
@@ -122,10 +92,7 @@ export async function handler(req: Request): Promise<Response> {
 
     if (updateError) {
       console.error('Failed to update order:', updateError);
-      return new Response(
-        JSON.stringify({ error: 'SERVER_ERROR', message: 'Failed to update order' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('SERVER_ERROR', 'Failed to update order', 500);
     }
 
     // Record status history
@@ -144,31 +111,17 @@ export async function handler(req: Request): Promise<Response> {
     sendOrderStatusSMS(customerPhone, order.order_number, 'delivered').catch(console.error);
     sendOrderPush(order.user_id, order.order_number, 'delivered').catch(console.error);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        order: {
-          id: updatedOrder.id,
-          order_number: updatedOrder.order_number,
-          status: updatedOrder.status,
-        },
-        message: 'Delivery completed successfully',
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonResponse({
+      success: true,
+      order: {
+        id: updatedOrder.id,
+        order_number: updatedOrder.order_number,
+        status: updatedOrder.status,
+      },
+      message: 'Delivery completed successfully',
+    });
   } catch (error) {
-    if (error instanceof Error && error.name === 'AuthError') {
-      return new Response(
-        JSON.stringify({ error: 'UNAUTHORIZED', message: error.message }),
-        { status: (error as { status?: number }).status || 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    console.error('Verify delivery OTP error:', error);
-    return new Response(
-      JSON.stringify({ error: 'SERVER_ERROR', message: 'An unexpected error occurred' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return handleError(error, 'Verify delivery OTP');
   }
 }
 

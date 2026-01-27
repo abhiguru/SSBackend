@@ -11,11 +11,8 @@
 
 import { getServiceClient, generateOTP, hashOTP, validatePhone, normalizePhone } from "../_shared/auth.ts";
 import { sendOTPWithConfig, getSMSConfig, SMSConfig } from "../_shared/sms.ts";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
+import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts";
 
 interface SendOTPRequest {
   phone: string;
@@ -60,30 +57,21 @@ export async function handler(req: Request): Promise<Response> {
   try {
     // Only allow POST
     if (req.method !== 'POST') {
-      return new Response(
-        JSON.stringify({ error: 'METHOD_NOT_ALLOWED', message: 'Only POST requests allowed' }),
-        { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('METHOD_NOT_ALLOWED', 'Only POST requests allowed', 405);
     }
 
     // Parse request body
     const body: SendOTPRequest = await req.json();
 
     if (!body.phone) {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_PHONE', message: 'Phone number is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_PHONE', 'Phone number is required', 400);
     }
 
     // Normalize and validate phone
     const phone = normalizePhone(body.phone);
 
     if (!validatePhone(phone)) {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_PHONE', message: 'Invalid phone number format. Use +91XXXXXXXXXX' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_PHONE', 'Invalid phone number format. Use +91XXXXXXXXXX', 400);
     }
 
     const supabase = getServiceClient();
@@ -99,12 +87,10 @@ export async function handler(req: Request): Promise<Response> {
       if (ipError) {
         console.error('IP rate limit check error:', ipError);
       } else if (ipRateResult && !ipRateResult.allowed) {
-        return new Response(
-          JSON.stringify({
-            error: ipRateResult.error || 'IP_RATE_LIMITED',
-            message: ipRateResult.message || 'Too many requests from this IP'
-          }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        return errorResponse(
+          ipRateResult.error || 'IP_RATE_LIMITED',
+          ipRateResult.message || 'Too many requests from this IP',
+          429,
         );
       }
     }
@@ -117,12 +103,10 @@ export async function handler(req: Request): Promise<Response> {
     if (phoneError) {
       console.error('Phone rate limit check error:', phoneError);
     } else if (phoneRateResult && !phoneRateResult.allowed) {
-      return new Response(
-        JSON.stringify({
-          error: phoneRateResult.error || 'RATE_LIMITED',
-          message: phoneRateResult.message || 'Too many OTP requests'
-        }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      return errorResponse(
+        phoneRateResult.error || 'RATE_LIMITED',
+        phoneRateResult.message || 'Too many OTP requests',
+        429,
       );
     }
 
@@ -181,10 +165,7 @@ export async function handler(req: Request): Promise<Response> {
 
     if (insertError) {
       console.error('Failed to store OTP request:', insertError);
-      return new Response(
-        JSON.stringify({ error: 'SERVER_ERROR', message: 'Failed to generate OTP' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('SERVER_ERROR', 'Failed to generate OTP', 500);
     }
 
     // Send OTP via SMS (only in production mode for non-test phones)
@@ -211,25 +192,18 @@ export async function handler(req: Request): Promise<Response> {
         .eq('otp_hash', otpHash);
     }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        message: 'OTP sent successfully',
-        expires_in: otpExpiry,
-        // Include rate limit info in response
-        rate_limit: {
-          hourly_remaining: phoneRateResult?.hourly_remaining,
-          daily_remaining: phoneRateResult?.daily_remaining,
-        },
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonResponse({
+      success: true,
+      message: 'OTP sent successfully',
+      expires_in: otpExpiry,
+      // Include rate limit info in response
+      rate_limit: {
+        hourly_remaining: phoneRateResult?.hourly_remaining,
+        daily_remaining: phoneRateResult?.daily_remaining,
+      },
+    });
   } catch (error) {
-    console.error('Send OTP error:', error);
-    return new Response(
-      JSON.stringify({ error: 'SERVER_ERROR', message: 'An unexpected error occurred' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return handleError(error, 'Send OTP');
   }
 }
 

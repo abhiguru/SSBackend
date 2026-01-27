@@ -5,19 +5,16 @@
 // Flow:
 // 1. Hash the provided refresh token
 // 2. Look up in refresh_tokens table
-// 3. If revoked → revoke ALL user tokens (reuse detection), return 401
-// 4. If expired → return 401
+// 3. If revoked -> revoke ALL user tokens (reuse detection), return 401
+// 4. If expired -> return 401
 // 5. Fetch fresh user data (role, active status)
 // 6. Rotate: revoke old token, issue new refresh token
 // 7. Issue new access_token via signJWT with user_role
 // 8. Return { success, access_token, refresh_token, user }
 
 import { getServiceClient, hashOTP, signJWT } from "../_shared/auth.ts";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
+import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts";
 
 interface RefreshTokenRequest {
   refresh_token: string;
@@ -32,20 +29,14 @@ export async function handler(req: Request): Promise<Response> {
   try {
     // Only allow POST
     if (req.method !== 'POST') {
-      return new Response(
-        JSON.stringify({ error: 'METHOD_NOT_ALLOWED', message: 'Only POST requests allowed' }),
-        { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('METHOD_NOT_ALLOWED', 'Only POST requests allowed', 405);
     }
 
     // Parse request body
     const body: RefreshTokenRequest = await req.json();
 
     if (!body.refresh_token) {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_INPUT', message: 'refresh_token is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_INPUT', 'refresh_token is required', 400);
     }
 
     const supabase = getServiceClient();
@@ -61,10 +52,7 @@ export async function handler(req: Request): Promise<Response> {
       .single();
 
     if (tokenError || !tokenRecord) {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_TOKEN', message: 'Invalid refresh token' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_TOKEN', 'Invalid refresh token', 401);
     }
 
     // Reuse detection: if token is already revoked, revoke ALL tokens for this user
@@ -77,10 +65,7 @@ export async function handler(req: Request): Promise<Response> {
         .eq('user_id', tokenRecord.user_id)
         .eq('revoked', false);
 
-      return new Response(
-        JSON.stringify({ error: 'TOKEN_REVOKED', message: 'Refresh token has been revoked. Please log in again.' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('TOKEN_REVOKED', 'Refresh token has been revoked. Please log in again.', 401);
     }
 
     // Check expiration
@@ -91,10 +76,7 @@ export async function handler(req: Request): Promise<Response> {
         .update({ revoked: true })
         .eq('id', tokenRecord.id);
 
-      return new Response(
-        JSON.stringify({ error: 'TOKEN_EXPIRED', message: 'Refresh token has expired. Please log in again.' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('TOKEN_EXPIRED', 'Refresh token has expired. Please log in again.', 401);
     }
 
     // Fetch fresh user data
@@ -105,10 +87,7 @@ export async function handler(req: Request): Promise<Response> {
       .single();
 
     if (userError || !user) {
-      return new Response(
-        JSON.stringify({ error: 'USER_NOT_FOUND', message: 'User not found' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('USER_NOT_FOUND', 'User not found', 401);
     }
 
     if (!user.is_active) {
@@ -119,10 +98,7 @@ export async function handler(req: Request): Promise<Response> {
         .eq('user_id', user.id)
         .eq('revoked', false);
 
-      return new Response(
-        JSON.stringify({ error: 'ACCOUNT_DEACTIVATED', message: 'Your account has been deactivated' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('ACCOUNT_DEACTIVATED', 'Your account has been deactivated', 403);
     }
 
     // Rotate: revoke old token
@@ -152,27 +128,20 @@ export async function handler(req: Request): Promise<Response> {
       user_role: user.role,
     }, 3600);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        access_token: accessToken,
-        refresh_token: newRefreshTokenValue,
-        user: {
-          id: user.id,
-          phone: user.phone,
-          name: user.name,
-          role: user.role,
-          language: user.language || 'en',
-        },
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonResponse({
+      success: true,
+      access_token: accessToken,
+      refresh_token: newRefreshTokenValue,
+      user: {
+        id: user.id,
+        phone: user.phone,
+        name: user.name,
+        role: user.role,
+        language: user.language || 'en',
+      },
+    });
   } catch (error) {
-    console.error('Refresh token error:', error);
-    return new Response(
-      JSON.stringify({ error: 'SERVER_ERROR', message: 'An unexpected error occurred' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return handleError(error, 'Refresh token');
   }
 }
 

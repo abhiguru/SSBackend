@@ -5,11 +5,8 @@
 import { getServiceClient, requireDeliveryStaff } from "../_shared/auth.ts";
 import { sendOrderPush } from "../_shared/push.ts";
 import { sendOrderStatusSMS } from "../_shared/sms.ts";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
+import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts";
 
 interface MarkFailedRequest {
   order_id: string;
@@ -25,10 +22,7 @@ export async function handler(req: Request): Promise<Response> {
   try {
     // Only allow POST
     if (req.method !== 'POST') {
-      return new Response(
-        JSON.stringify({ error: 'METHOD_NOT_ALLOWED', message: 'Only POST requests allowed' }),
-        { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('METHOD_NOT_ALLOWED', 'Only POST requests allowed', 405);
     }
 
     // Require delivery staff authentication
@@ -39,18 +33,12 @@ export async function handler(req: Request): Promise<Response> {
     const body: MarkFailedRequest = await req.json();
 
     if (!body.order_id || !body.reason) {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_INPUT', message: 'order_id and reason are required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_INPUT', 'order_id and reason are required', 400);
     }
 
     // Validate reason
     if (body.reason.length < 5 || body.reason.length > 500) {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_REASON', message: 'Reason must be between 5 and 500 characters' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_REASON', 'Reason must be between 5 and 500 characters', 400);
     }
 
     // Get order
@@ -61,26 +49,17 @@ export async function handler(req: Request): Promise<Response> {
       .single();
 
     if (orderError || !order) {
-      return new Response(
-        JSON.stringify({ error: 'ORDER_NOT_FOUND', message: 'Order not found' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('ORDER_NOT_FOUND', 'Order not found', 404);
     }
 
     // Verify this order is assigned to the requesting delivery staff
     if (order.delivery_staff_id !== auth.userId) {
-      return new Response(
-        JSON.stringify({ error: 'NOT_ASSIGNED', message: 'This order is not assigned to you' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('NOT_ASSIGNED', 'This order is not assigned to you', 403);
     }
 
     // Verify order is in correct status
     if (order.status !== 'out_for_delivery') {
-      return new Response(
-        JSON.stringify({ error: 'INVALID_STATUS', message: `Order is ${order.status}, not out for delivery` }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('INVALID_STATUS', `Order is ${order.status}, not out for delivery`, 400);
     }
 
     // Update order to delivery_failed
@@ -98,10 +77,7 @@ export async function handler(req: Request): Promise<Response> {
 
     if (updateError) {
       console.error('Failed to update order:', updateError);
-      return new Response(
-        JSON.stringify({ error: 'SERVER_ERROR', message: 'Failed to update order' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('SERVER_ERROR', 'Failed to update order', 500);
     }
 
     // Record status history
@@ -120,32 +96,18 @@ export async function handler(req: Request): Promise<Response> {
     sendOrderStatusSMS(customerPhone, order.order_number, 'delivery_failed').catch(console.error);
     sendOrderPush(order.user_id, order.order_number, 'delivery_failed').catch(console.error);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        order: {
-          id: updatedOrder.id,
-          order_number: updatedOrder.order_number,
-          status: updatedOrder.status,
-          failure_reason: updatedOrder.failure_reason,
-        },
-        message: 'Delivery marked as failed',
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonResponse({
+      success: true,
+      order: {
+        id: updatedOrder.id,
+        order_number: updatedOrder.order_number,
+        status: updatedOrder.status,
+        failure_reason: updatedOrder.failure_reason,
+      },
+      message: 'Delivery marked as failed',
+    });
   } catch (error) {
-    if (error instanceof Error && error.name === 'AuthError') {
-      return new Response(
-        JSON.stringify({ error: 'UNAUTHORIZED', message: error.message }),
-        { status: (error as { status?: number }).status || 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    console.error('Mark delivery failed error:', error);
-    return new Response(
-      JSON.stringify({ error: 'SERVER_ERROR', message: 'An unexpected error occurred' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return handleError(error, 'Mark delivery failed');
   }
 }
 
