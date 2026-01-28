@@ -106,7 +106,8 @@ ALTER TABLE porter_webhooks ENABLE ROW LEVEL SECURITY;
 -- Admin can do everything with porter_deliveries
 CREATE POLICY "porter_deliveries_admin_all" ON porter_deliveries
     FOR ALL TO authenticated
-    USING ((SELECT auth.is_admin()));
+    USING ((SELECT auth.is_admin()))
+    WITH CHECK ((SELECT auth.is_admin()));
 
 -- Customers can read their own order's porter delivery info
 CREATE POLICY "porter_deliveries_customer_read" ON porter_deliveries

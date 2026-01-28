@@ -101,8 +101,8 @@ export async function handler(req: Request): Promise<Response> {
 
     // Get quote from Porter
     const pickupCoords = {
-      lat: parseFloat(JSON.parse(pickupLat.value)),
-      lng: parseFloat(JSON.parse(pickupLng.value)),
+      lat: parseFloat(String(pickupLat.value)),
+      lng: parseFloat(String(pickupLng.value)),
     };
 
     const quote = await getQuote({

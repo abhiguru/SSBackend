@@ -88,7 +88,8 @@ export async function handler(req: Request): Promise<Response> {
 
     const settingsMap: Record<string, string> = {};
     settings?.forEach(s => {
-      settingsMap[s.key] = JSON.parse(s.value);
+      // PostgREST returns JSONB as already-parsed values, so use directly
+      settingsMap[s.key] = typeof s.value === 'string' ? s.value : String(s.value);
     });
 
     if (!settingsMap.porter_pickup_lat || !settingsMap.porter_pickup_lng) {
@@ -147,28 +148,33 @@ export async function handler(req: Request): Promise<Response> {
     });
 
     // Insert porter_deliveries record
-    const { error: insertError } = await supabase
+    const insertData = {
+      order_id: body.order_id,
+      porter_order_id: porterResponse.porter_order_id,
+      crn: porterResponse.crn,
+      tracking_url: porterResponse.tracking_url,
+      pickup_lat: parseFloat(settingsMap.porter_pickup_lat),
+      pickup_lng: parseFloat(settingsMap.porter_pickup_lng),
+      drop_lat: dropCoords.lat,
+      drop_lng: dropCoords.lng,
+      porter_status: 'live',
+      estimated_pickup_time: porterResponse.estimated_pickup_time,
+      estimated_delivery_time: porterResponse.estimated_delivery_time,
+    };
+    console.log('Inserting porter_deliveries:', JSON.stringify(insertData));
+
+    const { data: insertData2, error: insertError } = await supabase
       .from('porter_deliveries')
-      .upsert({
-        order_id: body.order_id,
-        porter_order_id: porterResponse.porter_order_id,
-        crn: porterResponse.crn,
-        tracking_url: porterResponse.tracking_url,
-        pickup_lat: parseFloat(settingsMap.porter_pickup_lat),
-        pickup_lng: parseFloat(settingsMap.porter_pickup_lng),
-        drop_lat: dropCoords.lat,
-        drop_lng: dropCoords.lng,
-        porter_status: 'live',
-        estimated_pickup_time: porterResponse.estimated_pickup_time,
-        estimated_delivery_time: porterResponse.estimated_delivery_time,
-      }, {
-        onConflict: 'order_id',
-      });
+      .insert(insertData)
+      .select()
+      .single();
 
     if (insertError) {
-      console.error('Failed to insert porter_deliveries:', insertError);
-      return errorResponse('DATABASE_ERROR', 'Failed to record Porter delivery', 500);
+      console.error('Failed to insert porter_deliveries:', JSON.stringify(insertError));
+      console.error('Insert error details:', insertError.message, insertError.code, insertError.details);
+      return errorResponse('DATABASE_ERROR', `Failed to record Porter delivery: ${insertError.message}`, 500);
     }
+    console.log('Inserted porter_deliveries:', JSON.stringify(insertData2));
 
     // Update order status to out_for_delivery with delivery_type = porter
     const { error: updateError } = await supabase
