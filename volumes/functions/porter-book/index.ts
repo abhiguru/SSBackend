@@ -147,9 +147,8 @@ export async function handler(req: Request): Promise<Response> {
       order_value_paise: order.total_paise,
     });
 
-    // Insert porter_deliveries record
-    const insertData = {
-      order_id: body.order_id,
+    // Prepare porter_deliveries data
+    const porterData = {
       porter_order_id: porterResponse.porter_order_id,
       crn: porterResponse.crn,
       tracking_url: porterResponse.tracking_url,
@@ -160,21 +159,47 @@ export async function handler(req: Request): Promise<Response> {
       porter_status: 'live',
       estimated_pickup_time: porterResponse.estimated_pickup_time,
       estimated_delivery_time: porterResponse.estimated_delivery_time,
+      // Clear previous delivery data
+      driver_name: null,
+      driver_phone: null,
+      vehicle_number: null,
+      actual_pickup_time: null,
+      actual_delivery_time: null,
+      quoted_fare_paise: null,
+      final_fare_paise: null,
     };
-    console.log('Inserting porter_deliveries:', JSON.stringify(insertData));
 
-    const { data: insertData2, error: insertError } = await supabase
-      .from('porter_deliveries')
-      .insert(insertData)
-      .select()
-      .single();
+    let porterRecord;
+    let dbError;
 
-    if (insertError) {
-      console.error('Failed to insert porter_deliveries:', JSON.stringify(insertError));
-      console.error('Insert error details:', insertError.message, insertError.code, insertError.details);
-      return errorResponse('DATABASE_ERROR', `Failed to record Porter delivery: ${insertError.message}`, 500);
+    if (existingPorter) {
+      // Update existing cancelled record
+      console.log('Updating existing porter_deliveries:', existingPorter.id);
+      const { data, error } = await supabase
+        .from('porter_deliveries')
+        .update(porterData)
+        .eq('id', existingPorter.id)
+        .select()
+        .single();
+      porterRecord = data;
+      dbError = error;
+    } else {
+      // Insert new record
+      console.log('Inserting new porter_deliveries for order:', body.order_id);
+      const { data, error } = await supabase
+        .from('porter_deliveries')
+        .insert({ order_id: body.order_id, ...porterData })
+        .select()
+        .single();
+      porterRecord = data;
+      dbError = error;
     }
-    console.log('Inserted porter_deliveries:', JSON.stringify(insertData2));
+
+    if (dbError) {
+      console.error('Failed to save porter_deliveries:', JSON.stringify(dbError));
+      return errorResponse('DATABASE_ERROR', `Failed to record Porter delivery: ${dbError.message}`, 500);
+    }
+    console.log('Saved porter_deliveries:', JSON.stringify(porterRecord));
 
     // Update order status to out_for_delivery with delivery_type = porter
     const { error: updateError } = await supabase
