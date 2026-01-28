@@ -106,6 +106,7 @@ CREATE TABLE products (
     image_url TEXT,
     is_available BOOLEAN NOT NULL DEFAULT true,
     is_active BOOLEAN NOT NULL DEFAULT true,
+    price_per_kg_paise INT NOT NULL DEFAULT 0 CHECK (price_per_kg_paise >= 0),
     display_order INT NOT NULL DEFAULT 0,
     search_vector TSVECTOR,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

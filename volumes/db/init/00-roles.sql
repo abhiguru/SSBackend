@@ -15,6 +15,9 @@ BEGIN
     END IF;
 END
 $$;
+-- Ensure INHERIT even if 00-roles.sh created the role with different attributes.
+-- Modern Supabase requires INHERIT so the authenticator chain works correctly.
+ALTER ROLE anon INHERIT;
 
 -- authenticated role (for authenticated API requests)
 DO $$
@@ -24,6 +27,7 @@ BEGIN
     END IF;
 END
 $$;
+ALTER ROLE authenticated INHERIT;
 
 -- service_role (for service-level access, bypasses RLS)
 DO $$
@@ -33,6 +37,7 @@ BEGIN
     END IF;
 END
 $$;
+ALTER ROLE service_role INHERIT;
 
 -- supabase_admin (for admin operations)
 DO $$
@@ -65,6 +70,8 @@ BEGIN
     END IF;
 END
 $$;
+-- Ensure BYPASSRLS even if 00-roles.sh created the role without it
+ALTER ROLE supabase_storage_admin BYPASSRLS;
 
 -- =============================================
 -- SCHEMAS
@@ -121,6 +128,20 @@ GRANT ALL ON SCHEMA storage TO supabase_storage_admin WITH GRANT OPTION;
 
 -- Storage admin can create extensions
 GRANT CREATE ON SCHEMA extensions TO supabase_storage_admin;
+
+-- Storage admin uses the authenticator chain to SET ROLE to API roles.
+-- Chain: supabase_storage_admin → authenticator → authenticated/anon/service_role
+-- This matches Supabase migration 20231013070755.
+GRANT authenticator TO supabase_storage_admin;
+
+-- Table-level grants on storage tables for RLS-based access.
+-- The storage service switches to authenticated/anon to evaluate RLS,
+-- so those roles need table-level permissions on all storage tables.
+-- (The actual access control is done by RLS policies, not these grants.)
+GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO authenticated;
+GRANT SELECT ON storage.objects TO anon;
+GRANT SELECT ON storage.buckets TO authenticated, anon;
+GRANT ALL ON ALL TABLES IN SCHEMA storage TO service_role;
 
 -- =============================================
 -- SUPAVISOR PERMISSIONS

@@ -131,7 +131,7 @@ RETURNS JSONB AS $$
 DECLARE
     v_record otp_rate_limits%ROWTYPE;
     v_hourly_limit INTEGER := 40;
-    v_daily_limit INTEGER := 20;
+    v_daily_limit INTEGER := 999999; -- effectively disabled
     v_hourly_count INTEGER;
     v_daily_count INTEGER;
     v_now TIMESTAMPTZ := NOW();

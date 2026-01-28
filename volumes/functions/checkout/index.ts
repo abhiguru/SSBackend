@@ -1,6 +1,6 @@
 // Checkout Edge Function
 // POST /functions/v1/checkout
-// Body: { items: [{product_id, weight_option_id, quantity}], address_id, notes? }
+// Body: { items: [{product_id, weight_grams, quantity}], address_id, notes? }
 
 import { getServiceClient, requireAuth } from "../_shared/auth.ts";
 import { sendNewOrderPushToAdmins } from "../_shared/push.ts";
@@ -9,7 +9,7 @@ import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts
 
 interface CartItem {
   product_id: string;
-  weight_option_id: string;
+  weight_grams: number;
   quantity: number;
 }
 
@@ -17,6 +17,10 @@ interface CheckoutRequest {
   items: CartItem[];
   address_id: string;
   notes?: string;
+}
+
+function formatWeightLabel(grams: number): string {
+  return grams >= 1000 ? `${grams / 1000}kg` : `${grams}g`;
 }
 
 export async function handler(req: Request): Promise<Response> {
@@ -78,37 +82,23 @@ export async function handler(req: Request): Promise<Response> {
       );
     }
 
-    // Validate and fetch cart items with product data
-    const weightOptionIds = body.items.map(item => item.weight_option_id);
-    const { data: weightOptions, error: woError } = await supabase
-      .from('weight_options')
-      .select(`
-        id,
-        weight_grams,
-        weight_label,
-        price_paise,
-        is_available,
-        product:products (
-          id,
-          name,
-          name_gu,
-          is_available,
-          is_active
-        )
-      `)
-      .in('id', weightOptionIds);
+    // Fetch products for all cart items
+    const productIds = body.items.map(item => item.product_id);
+    const { data: products, error: prodError } = await supabase
+      .from('products')
+      .select('id, name, name_gu, price_per_kg_paise, is_available, is_active')
+      .in('id', productIds);
 
-    if (woError || !weightOptions) {
+    if (prodError || !products) {
       return errorResponse('SERVER_ERROR', 'Failed to fetch product data', 500);
     }
 
     // Create lookup map
-    const woMap = new Map(weightOptions.map(wo => [wo.id, wo]));
+    const productMap = new Map(products.map(p => [p.id, p]));
 
     // Validate all items and calculate totals
     const orderItems: Array<{
       product_id: string;
-      weight_option_id: string;
       product_name: string;
       product_name_gu: string | null;
       weight_label: string;
@@ -121,18 +111,21 @@ export async function handler(req: Request): Promise<Response> {
     const unavailableItems: string[] = [];
 
     for (const item of body.items) {
-      const wo = woMap.get(item.weight_option_id);
+      const product = productMap.get(item.product_id);
 
-      if (!wo) {
-        return errorResponse('INVALID_ITEM', 'Product variant not found', 400);
+      if (!product) {
+        return errorResponse('INVALID_ITEM', 'Product not found', 400);
       }
 
-      const product = wo.product as { id: string; name: string; name_gu: string | null; is_available: boolean; is_active: boolean };
-
       // Check availability
-      if (!wo.is_available || !product.is_available || !product.is_active) {
+      if (!product.is_available || !product.is_active) {
         unavailableItems.push(product.name);
         continue;
+      }
+
+      // Validate weight_grams
+      if (!item.weight_grams || item.weight_grams <= 0) {
+        return errorResponse('INVALID_WEIGHT', `Invalid weight for ${product.name}`, 400);
       }
 
       // Validate quantity
@@ -140,16 +133,18 @@ export async function handler(req: Request): Promise<Response> {
         return errorResponse('INVALID_QUANTITY', `Invalid quantity for ${product.name}`, 400);
       }
 
+      // Compute price from per-kg rate
+      const unitPricePaise = Math.round(product.price_per_kg_paise * item.weight_grams / 1000);
+
       orderItems.push({
         product_id: product.id,
-        weight_option_id: wo.id,
         product_name: product.name,
         product_name_gu: product.name_gu,
-        weight_label: wo.weight_label,
-        weight_grams: wo.weight_grams,
-        unit_price_paise: wo.price_paise,
+        weight_label: formatWeightLabel(item.weight_grams),
+        weight_grams: item.weight_grams,
+        unit_price_paise: unitPricePaise,
         quantity: item.quantity,
-        total_paise: wo.price_paise * item.quantity,
+        total_paise: unitPricePaise * item.quantity,
       });
     }
 
@@ -234,14 +229,14 @@ export async function handler(req: Request): Promise<Response> {
       return errorResponse('SERVER_ERROR', 'Failed to create order', 500);
     }
 
-    // Create order items
+    // Create order items (weight_option_id set to null — pricing is per-kg now)
     const { error: itemsError } = await supabase
       .from('order_items')
       .insert(
         orderItems.map(item => ({
           order_id: order.id,
           product_id: item.product_id,
-          weight_option_id: item.weight_option_id,
+          weight_option_id: null,
           product_name: item.product_name,
           product_name_gu: item.product_name_gu,
           weight_label: item.weight_label,

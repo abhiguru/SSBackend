@@ -13,7 +13,7 @@ interface ReorderRequest {
 
 interface CartItem {
   product_id: string;
-  weight_option_id: string;
+  weight_grams: number;
   quantity: number;
   product_name: string;
   product_name_gu: string | null;
@@ -64,61 +64,53 @@ export async function handler(req: Request): Promise<Response> {
     // Get order items
     const { data: orderItems, error: itemsError } = await supabase
       .from('order_items')
-      .select('product_id, weight_option_id, quantity, product_name, product_name_gu, weight_label')
+      .select('product_id, quantity, product_name, product_name_gu, weight_label, weight_grams')
       .eq('order_id', body.order_id);
 
     if (itemsError || !orderItems || orderItems.length === 0) {
       return errorResponse('NO_ITEMS', 'No items found in this order', 404);
     }
 
-    // Get current product and weight option availability
+    // Fetch current products with per-kg pricing
     const productIds = orderItems.map(item => item.product_id).filter(Boolean);
-    const weightOptionIds = orderItems.map(item => item.weight_option_id).filter(Boolean);
 
-    // Fetch current products
     const { data: products } = await supabase
       .from('products')
-      .select('id, name, name_gu, is_available, is_active')
+      .select('id, name, name_gu, price_per_kg_paise, is_available, is_active')
       .in('id', productIds);
 
-    // Fetch current weight options
-    const { data: weightOptions } = await supabase
-      .from('weight_options')
-      .select('id, price_paise, is_available')
-      .in('id', weightOptionIds);
-
-    // Create lookup maps
+    // Create lookup map
     const productMap = new Map(products?.map(p => [p.id, p]) || []);
-    const woMap = new Map(weightOptions?.map(wo => [wo.id, wo]) || []);
 
-    // Build cart items with current availability
+    // Build cart items with current availability and per-kg pricing
     const cartItems: CartItem[] = [];
     const unavailableItems: string[] = [];
 
     for (const item of orderItems) {
       const product = item.product_id ? productMap.get(item.product_id) : null;
-      const weightOption = item.weight_option_id ? woMap.get(item.weight_option_id) : null;
 
       // Determine availability
-      const isProductAvailable = product?.is_available && product?.is_active;
-      const isWeightAvailable = weightOption?.is_available;
-      const isAvailable = isProductAvailable && isWeightAvailable;
+      const isAvailable = !!(product?.is_available && product?.is_active);
 
       if (!isAvailable) {
         unavailableItems.push(item.product_name);
       }
 
-      // Include item even if unavailable (let frontend decide what to show)
-      if (item.product_id && item.weight_option_id) {
+      if (item.product_id) {
+        // Compute price from per-kg rate
+        const pricePaise = product?.price_per_kg_paise
+          ? Math.round(product.price_per_kg_paise * item.weight_grams / 1000)
+          : 0;
+
         cartItems.push({
           product_id: item.product_id,
-          weight_option_id: item.weight_option_id,
+          weight_grams: item.weight_grams,
           quantity: item.quantity,
           product_name: product?.name || item.product_name,
           product_name_gu: product?.name_gu || item.product_name_gu,
           weight_label: item.weight_label,
-          price_paise: weightOption?.price_paise || 0,
-          is_available: isAvailable || false,
+          price_paise: pricePaise,
+          is_available: isAvailable,
         });
       }
     }
