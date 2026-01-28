@@ -172,6 +172,8 @@ services:
       IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
       IMGPROXY_USE_ETAG: "true"
       IMGPROXY_ENABLE_WEBP_DETECTION: "true"
+      IMGPROXY_JPEG_PROGRESSIVE: "true"
+      IMGPROXY_SET_CACHE_CONTROL: "public, max-age=31536000"
     volumes:
       - masala_storage:/var/lib/storage:z
     networks:
@@ -202,6 +204,11 @@ services:
       MSG91_SENDER_ID: ${MSG91_SENDER_ID:-MSSHOP}
       FCM_SERVER_KEY: ${FCM_SERVER_KEY}
       OTP_SECRET: ${OTP_SECRET}
+      # Porter delivery integration
+      PORTER_API_KEY: ${PORTER_API_KEY:-}
+      PORTER_WEBHOOK_SECRET: ${PORTER_WEBHOOK_SECRET:-}
+      PORTER_ENV: ${PORTER_ENV:-mock}
+      GOOGLE_GEOCODING_API_KEY: ${GOOGLE_GEOCODING_API_KEY:-}
     volumes:
       - ./volumes/functions:/home/deno/functions:Z
     command:

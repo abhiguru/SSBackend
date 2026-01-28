@@ -48,6 +48,22 @@ Deno.serve(async (req: Request) => {
       case 'cleanup':
         handler = (await import('../cleanup/index.ts')).handler;
         break;
+      // Porter delivery endpoints
+      case 'porter-quote':
+        handler = (await import('../porter-quote/index.ts')).handler;
+        break;
+      case 'porter-book':
+        handler = (await import('../porter-book/index.ts')).handler;
+        break;
+      case 'porter-cancel':
+        handler = (await import('../porter-cancel/index.ts')).handler;
+        break;
+      case 'porter-webhook':
+        handler = (await import('../porter-webhook/index.ts')).handler;
+        break;
+      case 'porter-mock-event':
+        handler = (await import('../porter-mock-event/index.ts')).handler;
+        break;
       case 'health':
       case '':
         return jsonResponse({
@@ -64,6 +80,11 @@ Deno.serve(async (req: Request) => {
             'mark-delivery-failed',
             'reorder',
             'cleanup',
+            'porter-quote',
+            'porter-book',
+            'porter-cancel',
+            'porter-webhook',
+            'porter-mock-event',
           ],
         });
       default:

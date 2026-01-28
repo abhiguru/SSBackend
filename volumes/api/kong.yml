@@ -74,7 +74,31 @@ services:
                 - anon
                 - admin
 
-  ## Storage API
+  ## Storage API - Public objects (no auth required)
+  ## Must be listed before the authenticated storage route so Kong
+  ## matches the more-specific path first.
+  - name: storage-v1-public
+    url: http://storage:5000/object/public/
+    routes:
+      - name: storage-v1-public
+        strip_path: true
+        paths:
+          - /storage/v1/object/public/
+        plugins:
+          - name: cors
+
+  ## Storage API - Render/transform (public images via imgproxy, no auth)
+  - name: storage-v1-render-public
+    url: http://storage:5000/render/image/public/
+    routes:
+      - name: storage-v1-render-public
+        strip_path: true
+        paths:
+          - /storage/v1/render/image/public/
+        plugins:
+          - name: cors
+
+  ## Storage API (authenticated)
   - name: storage-v1
     url: http://storage:5000/
     routes:
@@ -113,6 +137,17 @@ services:
               allow:
                 - anon
                 - admin
+
+  ## Porter Webhook (unauthenticated - uses signature verification)
+  - name: porter-webhook
+    url: http://functions:9000/porter-webhook
+    routes:
+      - name: porter-webhook
+        strip_path: true
+        paths:
+          - /functions/v1/porter-webhook
+        plugins:
+          - name: cors
 
   ## Postgres Meta
   - name: meta
