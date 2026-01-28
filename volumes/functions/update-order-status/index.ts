@@ -61,6 +61,10 @@ export async function handler(req: Request): Promise<Response> {
       return errorResponse('ORDER_NOT_FOUND', 'Order not found', 404);
     }
 
+    // Validate status transition
+    const currentStatus = order.status as string;
+    const newStatus = body.status;
+
     // Block manual status changes for Porter deliveries in progress
     if (order.delivery_type === 'porter' && order.status === 'out_for_delivery') {
       // Only allow cancellation for Porter orders
@@ -72,10 +76,6 @@ export async function handler(req: Request): Promise<Response> {
         );
       }
     }
-
-    // Validate status transition
-    const currentStatus = order.status as string;
-    const newStatus = body.status;
 
     const allowedTransitions = validTransitions[currentStatus] || [];
     if (!allowedTransitions.includes(newStatus)) {
