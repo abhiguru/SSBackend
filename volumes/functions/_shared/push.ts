@@ -261,7 +261,7 @@ export async function sendNewOrderPushToAdmins(
   const { data: admins, error } = await supabase
     .from('users')
     .select('id')
-    .in('role', ['admin', 'super_admin'])
+    .eq('role', 'admin')
     .eq('is_active', true);
 
   if (error || !admins || admins.length === 0) {

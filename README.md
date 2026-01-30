@@ -117,7 +117,7 @@ docker exec masala-db psql -U supabase_admin -d postgres -c "
 
 ### Core Tables
 
-- `users` - All user accounts (customer, admin, delivery_staff, super_admin)
+- `users` - All user accounts (customer, admin, delivery_staff)
 - `categories` - Product categories
 - `products` - Spice products with bilingual names
 - `weight_options` - Price variants (50g, 100g, 250g, 500g)

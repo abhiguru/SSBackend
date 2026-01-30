@@ -3,7 +3,7 @@
 import { requireAdmin, getServiceClient } from "../_shared/auth.ts";
 import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts";
 
-const VALID_ROLES = ['customer', 'admin', 'delivery_staff', 'super_admin'] as const;
+const VALID_ROLES = ['customer', 'admin', 'delivery_staff'] as const;
 
 export async function handler(req: Request): Promise<Response> {
   try {

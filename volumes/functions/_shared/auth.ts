@@ -6,7 +6,7 @@ export interface JWTPayload {
   sub: string;      // user id
   phone: string;
   role: string;     // PostgreSQL role for PostgREST (always 'authenticated')
-  user_role: 'customer' | 'admin' | 'delivery_staff' | 'super_admin'; // app-level role
+  user_role: 'customer' | 'admin' | 'delivery_staff'; // app-level role
   iat: number;
   exp: number;
 }
@@ -14,13 +14,13 @@ export interface JWTPayload {
 export interface SignJWTInput {
   sub: string;
   phone: string;
-  user_role: 'customer' | 'admin' | 'delivery_staff' | 'super_admin';
+  user_role: 'customer' | 'admin' | 'delivery_staff';
 }
 
 export interface AuthContext {
   userId: string;
   phone: string;
-  role: 'customer' | 'admin' | 'delivery_staff' | 'super_admin';
+  role: 'customer' | 'admin' | 'delivery_staff';
 }
 
 // Create Supabase client with service role
@@ -186,7 +186,7 @@ export async function requireAuth(req: Request): Promise<AuthContext> {
 export async function requireAdmin(req: Request): Promise<AuthContext> {
   const auth = await requireAuth(req);
 
-  if (auth.role !== 'admin' && auth.role !== 'super_admin') {
+  if (auth.role !== 'admin') {
     throw new AuthError('Admin access required', 403);
   }
 
@@ -197,19 +197,8 @@ export async function requireAdmin(req: Request): Promise<AuthContext> {
 export async function requireDeliveryStaff(req: Request): Promise<AuthContext> {
   const auth = await requireAuth(req);
 
-  if (auth.role !== 'delivery_staff' && auth.role !== 'admin' && auth.role !== 'super_admin') {
+  if (auth.role !== 'delivery_staff' && auth.role !== 'admin') {
     throw new AuthError('Delivery staff access required', 403);
-  }
-
-  return auth;
-}
-
-// Require super admin role
-export async function requireSuperAdmin(req: Request): Promise<AuthContext> {
-  const auth = await requireAuth(req);
-
-  if (auth.role !== 'super_admin') {
-    throw new AuthError('Super admin access required', 403);
   }
 
   return auth;

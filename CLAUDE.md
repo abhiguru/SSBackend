@@ -93,7 +93,7 @@ docker compose restart functions
 ### Database Structure
 
 Key tables and relationships:
-- `users` - All user types (customer, admin, delivery_staff, super_admin) via `user_role` enum
+- `users` - All user types (customer, admin, delivery_staff) via `user_role` enum
 - `products` → `weight_options` - Products have multiple weight/price variants
 - `orders` → `order_items` - Orders snapshot product data at order time
 - `order_status_history` - Audit trail for order state changes

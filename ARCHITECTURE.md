@@ -164,7 +164,7 @@ curl http://localhost:8100/functions/v1/health -H "apikey: ..."
 
 ### Enums
 
-- `user_role`: customer, admin, delivery_staff, super_admin
+- `user_role`: customer, admin, delivery_staff
 - `order_status`: placed, confirmed, out_for_delivery, delivered, cancelled, delivery_failed
 
 ### Core Tables
