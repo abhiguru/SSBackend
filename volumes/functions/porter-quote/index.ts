@@ -86,17 +86,32 @@ export async function handler(req: Request): Promise<Response> {
       shipping_pincode: order.shipping_pincode,
     });
 
-    // Geocode customer address
+    // Try cached coordinates from user_addresses first
     let dropCoords;
-    try {
-      dropCoords = await geocodeAddress(customerAddress);
-    } catch (geoError) {
-      console.error('Geocoding failed:', geoError);
-      return errorResponse(
-        'GEOCODING_FAILED',
-        'Could not determine delivery location coordinates',
-        400
-      );
+    if (order.address_id) {
+      const { data: addr } = await supabase
+        .from('user_addresses')
+        .select('lat, lng, formatted_address')
+        .eq('id', order.address_id)
+        .single();
+
+      if (addr?.lat && addr?.lng) {
+        dropCoords = { lat: Number(addr.lat), lng: Number(addr.lng), formatted_address: addr.formatted_address };
+      }
+    }
+
+    // Fall back to geocoding if no cached coordinates
+    if (!dropCoords) {
+      try {
+        dropCoords = await geocodeAddress(customerAddress);
+      } catch (geoError) {
+        console.error('Geocoding failed:', geoError);
+        return errorResponse(
+          'GEOCODING_FAILED',
+          'Could not determine delivery location coordinates',
+          400
+        );
+      }
     }
 
     // Get quote from Porter

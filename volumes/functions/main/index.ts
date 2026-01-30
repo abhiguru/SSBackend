@@ -67,6 +67,15 @@ Deno.serve(async (req: Request) => {
       case 'delivery-staff':
         handler = (await import('../delivery-staff/index.ts')).handler;
         break;
+      case 'users':
+        handler = (await import('../users/index.ts')).handler;
+        break;
+      case 'admin-addresses':
+        handler = (await import('../admin-addresses/index.ts')).handler;
+        break;
+      case 'update-order-items':
+        handler = (await import('../update-order-items/index.ts')).handler;
+        break;
       case 'health':
       case '':
         return jsonResponse({
@@ -89,6 +98,9 @@ Deno.serve(async (req: Request) => {
             'porter-webhook',
             'porter-mock-event',
             'delivery-staff',
+            'users',
+            'admin-addresses',
+            'update-order-items',
           ],
         });
       default:
