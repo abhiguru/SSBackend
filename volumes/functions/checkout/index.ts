@@ -193,89 +193,44 @@ export async function handler(req: Request): Promise<Response> {
     const shippingPaise = subtotalPaise >= freeShippingThreshold ? 0 : shippingCharge;
     const totalPaise = subtotalPaise + shippingPaise;
 
-    // Generate order number
-    const { data: orderNumber, error: onError } = await supabase
-      .rpc('generate_order_number');
+    // Create order atomically (order + items + status history in one transaction)
+    const { data: orderResult, error: orderError } = await supabase.rpc('create_order_atomic', {
+      p_user_id: auth.userId,
+      p_shipping: {
+        name: address.full_name,
+        phone: address.phone,
+        line1: address.address_line1,
+        line2: address.address_line2 || null,
+        city: address.city,
+        state: address.state,
+        pincode: address.pincode,
+      },
+      p_subtotal_paise: subtotalPaise,
+      p_shipping_paise: shippingPaise,
+      p_total_paise: totalPaise,
+      p_customer_notes: body.notes || null,
+      p_items: orderItems,
+    });
 
-    if (onError || !orderNumber) {
-      console.error('Failed to generate order number:', onError);
-      return errorResponse('SERVER_ERROR', 'Failed to create order', 500);
-    }
-
-    // Create order
-    const { data: order, error: orderError } = await supabase
-      .from('orders')
-      .insert({
-        order_number: orderNumber,
-        user_id: auth.userId,
-        status: 'placed',
-        shipping_name: address.full_name,
-        shipping_phone: address.phone,
-        shipping_address_line1: address.address_line1,
-        shipping_address_line2: address.address_line2,
-        shipping_city: address.city,
-        shipping_state: address.state,
-        shipping_pincode: address.pincode,
-        subtotal_paise: subtotalPaise,
-        shipping_paise: shippingPaise,
-        total_paise: totalPaise,
-        customer_notes: body.notes || null,
-      })
-      .select()
-      .single();
-
-    if (orderError || !order) {
+    if (orderError || !orderResult) {
       console.error('Failed to create order:', orderError);
       return errorResponse('SERVER_ERROR', 'Failed to create order', 500);
     }
 
-    // Create order items (weight_option_id set to null — pricing is per-kg now)
-    const { error: itemsError } = await supabase
-      .from('order_items')
-      .insert(
-        orderItems.map(item => ({
-          order_id: order.id,
-          product_id: item.product_id,
-          weight_option_id: null,
-          product_name: item.product_name,
-          product_name_gu: item.product_name_gu,
-          weight_label: item.weight_label,
-          weight_grams: item.weight_grams,
-          unit_price_paise: item.unit_price_paise,
-          quantity: item.quantity,
-          total_paise: item.total_paise,
-        }))
-      );
-
-    if (itemsError) {
-      console.error('Failed to create order items:', itemsError);
-    }
-
-    // Create initial status history
-    await supabase
-      .from('order_status_history')
-      .insert({
-        order_id: order.id,
-        from_status: null,
-        to_status: 'placed',
-        changed_by: auth.userId,
-        notes: 'Order placed',
-      });
-
     // Send push notification to admins
     const totalFormatted = `₹${(totalPaise / 100).toFixed(2)}`;
-    sendNewOrderPushToAdmins(orderNumber, totalFormatted).catch(console.error);
+    sendNewOrderPushToAdmins(orderResult.order_number, totalFormatted).catch(console.error);
 
     return jsonResponse({
       success: true,
       order: {
-        id: order.id,
-        order_number: order.order_number,
-        status: order.status,
-        subtotal_paise: subtotalPaise,
-        shipping_paise: shippingPaise,
-        total_paise: totalPaise,
-        created_at: order.created_at,
+        id: orderResult.id,
+        order_number: orderResult.order_number,
+        status: orderResult.status,
+        subtotal_paise: orderResult.subtotal_paise,
+        shipping_paise: orderResult.shipping_paise,
+        total_paise: orderResult.total_paise,
+        created_at: orderResult.created_at,
       },
       message: 'Order placed successfully',
     }, 201);

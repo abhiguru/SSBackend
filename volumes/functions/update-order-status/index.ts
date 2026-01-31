@@ -159,29 +159,31 @@ export async function handler(req: Request): Promise<Response> {
       updateData.cancellation_reason = body.cancellation_reason || body.notes || 'Cancelled by admin';
     }
 
-    // Update order
-    const { data: updatedOrder, error: updateError } = await supabase
-      .from('orders')
-      .update(updateData)
-      .eq('id', body.order_id)
-      .select()
-      .single();
+    // Build update data for RPC (only non-status fields)
+    const rpcUpdateData: Record<string, unknown> = {};
+    if (updateData.delivery_staff_id !== undefined) rpcUpdateData.delivery_staff_id = updateData.delivery_staff_id;
+    if (updateData.delivery_otp_hash !== undefined) rpcUpdateData.delivery_otp_hash = updateData.delivery_otp_hash;
+    if (updateData.delivery_otp_expires !== undefined) rpcUpdateData.delivery_otp_expires = updateData.delivery_otp_expires;
+    if (updateData.delivery_type !== undefined) rpcUpdateData.delivery_type = updateData.delivery_type;
+    if (updateData.cancellation_reason !== undefined) rpcUpdateData.cancellation_reason = updateData.cancellation_reason;
+
+    // Update order + record status history atomically
+    const { data: orderResult, error: updateError } = await supabase.rpc('update_order_status_atomic', {
+      p_order_id: body.order_id,
+      p_from_status: currentStatus,
+      p_to_status: newStatus,
+      p_changed_by: auth.userId,
+      p_notes: body.notes || null,
+      p_update_data: rpcUpdateData,
+    });
 
     if (updateError) {
       console.error('Failed to update order:', updateError);
+      if (updateError.message?.includes('status has changed')) {
+        return errorResponse('STATUS_CHANGED', 'Order status was modified by another request', 409);
+      }
       return errorResponse('SERVER_ERROR', 'Failed to update order', 500);
     }
-
-    // Record status history
-    await supabase
-      .from('order_status_history')
-      .insert({
-        order_id: body.order_id,
-        from_status: currentStatus,
-        to_status: newStatus,
-        changed_by: auth.userId,
-        notes: body.notes || null,
-      });
 
     // Send notifications to customer
     const customerPhone = (order.user as { phone: string })?.phone || order.shipping_phone;
@@ -191,9 +193,9 @@ export async function handler(req: Request): Promise<Response> {
     return jsonResponse({
       success: true,
       order: {
-        id: updatedOrder.id,
-        order_number: updatedOrder.order_number,
-        status: updatedOrder.status,
+        id: orderResult.id,
+        order_number: orderResult.order_number,
+        status: orderResult.status,
         previous_status: currentStatus,
       },
       message: `Order status updated to ${newStatus}`,
