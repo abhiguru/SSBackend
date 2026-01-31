@@ -7,6 +7,12 @@
 BEGIN;
 
 -- =============================================
+-- PRE-REQUISITE: Widen phone column for deleted user format
+-- +00deleted_xxxxxxxx is 19 chars, exceeds varchar(15)
+-- =============================================
+ALTER TABLE users ALTER COLUMN phone TYPE VARCHAR(30);
+
+-- =============================================
 -- 1A. TIGHTEN GRANTs
 -- =============================================
 
