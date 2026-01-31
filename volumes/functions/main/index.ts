@@ -76,6 +76,9 @@ Deno.serve(async (req: Request) => {
       case 'update-order-items':
         handler = (await import('../update-order-items/index.ts')).handler;
         break;
+      case 'request-account-deletion':
+        handler = (await import('../request-account-deletion/index.ts')).handler;
+        break;
       case 'health':
       case '':
         return jsonResponse({
@@ -101,6 +104,7 @@ Deno.serve(async (req: Request) => {
             'users',
             'admin-addresses',
             'update-order-items',
+            'request-account-deletion',
           ],
         });
       default:
