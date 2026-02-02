@@ -118,6 +118,24 @@ services:
                 - anon
                 - admin
 
+  ## Edge Functions - Shiprocket Webhook (no API key required, auth via anx-api-key header)
+  ## Two routes: original path + short /webhook alias for Shiprocket dashboard
+  - name: functions-v1-shiprocket-webhook
+    url: http://functions:9000/shiprocket-webhook
+    routes:
+      - name: functions-v1-shiprocket-webhook
+        strip_path: true
+        paths:
+          - /functions/v1/shiprocket-webhook
+        plugins:
+          - name: cors
+      - name: shiprocket-webhook-short
+        strip_path: true
+        paths:
+          - /webhook
+        plugins:
+          - name: cors
+
   ## Edge Functions
   - name: functions-v1
     url: http://functions:9000/

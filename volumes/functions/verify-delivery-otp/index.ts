@@ -109,7 +109,7 @@ export async function handler(req: Request): Promise<Response> {
     // Send notifications to customer
     const customerPhone = (order.user as { phone: string })?.phone || order.shipping_phone;
     sendOrderStatusSMS(customerPhone, order.order_number, 'delivered').catch(console.error);
-    sendOrderPush(order.user_id, order.order_number, 'delivered').catch(console.error);
+    sendOrderPush(order.user_id, order.order_number, 'delivered', order.id).catch(console.error);
 
     return jsonResponse({
       success: true,

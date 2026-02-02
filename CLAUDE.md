@@ -14,7 +14,7 @@ Masala Spice Shop MVP backend - a self-hosted Supabase backend for a React Nativ
 - **Auth**: Custom OTP + JWT (not Supabase Auth)
 - **Storage**: Supabase Storage
 - **SMS**: MSG91
-- **Push**: FCM
+- **Push**: Expo Push API
 
 ## Docker Stack Configuration
 
@@ -141,7 +141,6 @@ Edge functions at `/functions/v1/`:
 Required in `.env`:
 - `POSTGRES_PASSWORD`, `JWT_SECRET`, `OTP_SECRET`, `SERVICE_ROLE_KEY`
 - `MSG91_AUTH_KEY`, `MSG91_OTP_TEMPLATE`, `MSG91_TEMPLATE`
-- `FCM_SERVER_KEY`
 
 ## CORS Configuration
 

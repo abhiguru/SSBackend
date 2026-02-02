@@ -204,6 +204,10 @@ services:
       MSG91_SENDER_ID: ${MSG91_SENDER_ID:-MSSHOP}
       FCM_SERVER_KEY: ${FCM_SERVER_KEY}
       OTP_SECRET: ${OTP_SECRET}
+      # Shiprocket
+      SHIPROCKET_EMAIL: ${SHIPROCKET_EMAIL}
+      SHIPROCKET_PASSWORD: ${SHIPROCKET_PASSWORD}
+      SHIPROCKET_WEBHOOK_TOKEN: ${SHIPROCKET_WEBHOOK_TOKEN}
     volumes:
       - ./volumes/functions:/home/deno/functions:Z
     command:

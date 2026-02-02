@@ -7,6 +7,7 @@ import { sendOrderPush, sendDeliveryAssignmentPush } from "../_shared/push.ts";
 import { sendOrderStatusSMS, sendDeliveryOTP as sendDeliveryOTPSMS } from "../_shared/sms.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts";
+import { srFetchJSON } from "../_shared/shiprocket.ts";
 
 interface UpdateStatusRequest {
   order_id: string;
@@ -74,6 +75,15 @@ export async function handler(req: Request): Promise<Response> {
       );
     }
 
+    // Guard: Shiprocket orders must use dedicated endpoints for shipping
+    if (order.delivery_method === 'shiprocket' && newStatus === 'out_for_delivery') {
+      return errorResponse(
+        'USE_SHIPROCKET',
+        'This order uses Shiprocket delivery. Use shiprocket-assign-courier to ship it.',
+        400,
+      );
+    }
+
     // Prepare update data
     const updateData: Record<string, unknown> = {
       status: newStatus,
@@ -133,6 +143,22 @@ export async function handler(req: Request): Promise<Response> {
 
     if (newStatus === 'cancelled') {
       updateData.cancellation_reason = body.cancellation_reason || body.notes || 'Cancelled by admin';
+
+      // Also cancel on Shiprocket if applicable
+      if (order.delivery_method === 'shiprocket') {
+        const { data: shipment } = await supabase
+          .from('shiprocket_shipments')
+          .select('sr_order_id')
+          .eq('order_id', body.order_id)
+          .single();
+
+        if (shipment?.sr_order_id) {
+          srFetchJSON('/orders/cancel', {
+            method: 'POST',
+            body: JSON.stringify({ ids: [shipment.sr_order_id] }),
+          }).catch((err: unknown) => console.error('Shiprocket cancel failed:', err));
+        }
+      }
     }
 
     // Build update data for RPC (only non-status fields)

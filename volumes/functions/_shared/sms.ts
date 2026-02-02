@@ -83,20 +83,20 @@ export async function sendOTPWithConfig(
   }
 
   try {
-    // Remove +91 prefix for MSG91
+    // Format for MSG91 Flow API: 91 + 10 digits
     const mobileNumber = phone.replace(/^\+91/, '');
 
-    const response = await fetch('https://api.msg91.com/api/v5/otp', {
+    const response = await fetch('https://api.msg91.com/api/v5/flow/', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'authkey': config.msg91_auth_key,
       },
       body: JSON.stringify({
-        template_id: config.msg91_template_id,
-        mobile: mobileNumber,
-        otp: otp,
-        otp_length: otp.length,
+        flow_id: config.msg91_template_id,
+        sender: config.msg91_sender_id,
+        mobiles: `91${mobileNumber}`,
+        OTP: otp,
       }),
     });
 
@@ -115,10 +115,11 @@ export async function sendOTPWithConfig(
   }
 }
 
-// Legacy function - Send OTP via MSG91 OTP API (uses env variables)
+// Legacy function - Send OTP via MSG91 Flow API (uses env variables)
 export async function sendOTP({ phone, otp }: SendOTPOptions): Promise<boolean> {
   const authKey = Deno.env.get('MSG91_AUTH_KEY');
   const templateId = Deno.env.get('MSG91_OTP_TEMPLATE');
+  const senderId = Deno.env.get('MSG91_SENDER_ID') ?? 'GCSAMD';
 
   if (!authKey || !templateId) {
     console.error('MSG91 credentials not configured');
@@ -128,20 +129,20 @@ export async function sendOTP({ phone, otp }: SendOTPOptions): Promise<boolean> 
   }
 
   try {
-    // Remove +91 prefix for MSG91
+    // Format for MSG91 Flow API: 91 + 10 digits
     const mobileNumber = phone.replace(/^\+91/, '');
 
-    const response = await fetch('https://api.msg91.com/api/v5/otp', {
+    const response = await fetch('https://api.msg91.com/api/v5/flow/', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'authkey': authKey,
       },
       body: JSON.stringify({
-        template_id: templateId,
-        mobile: mobileNumber,
-        otp: otp,
-        otp_length: otp.length,
+        flow_id: templateId,
+        sender: senderId,
+        mobiles: `91${mobileNumber}`,
+        OTP: otp,
       }),
     });
 

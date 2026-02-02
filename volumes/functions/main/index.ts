@@ -69,6 +69,21 @@ Deno.serve(async (req: Request) => {
       case 'register-push-token':
         handler = (await import('../register-push-token/index.ts')).handler;
         break;
+      case 'shiprocket-create-shipment':
+        handler = (await import('../shiprocket-create-shipment/index.ts')).handler;
+        break;
+      case 'shiprocket-assign-courier':
+        handler = (await import('../shiprocket-assign-courier/index.ts')).handler;
+        break;
+      case 'shiprocket-webhook':
+        handler = (await import('../shiprocket-webhook/index.ts')).handler;
+        break;
+      case 'shiprocket-track':
+        handler = (await import('../shiprocket-track/index.ts')).handler;
+        break;
+      case 'shiprocket-cancel':
+        handler = (await import('../shiprocket-cancel/index.ts')).handler;
+        break;
       case 'health':
       case '':
         return jsonResponse({
@@ -92,6 +107,11 @@ Deno.serve(async (req: Request) => {
             'request-account-deletion',
             'process-account-deletion',
             'register-push-token',
+            'shiprocket-create-shipment',
+            'shiprocket-assign-courier',
+            'shiprocket-webhook',
+            'shiprocket-track',
+            'shiprocket-cancel',
           ],
         });
       default:

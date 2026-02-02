@@ -1,4 +1,4 @@
-// Firebase Cloud Messaging (FCM) Push Notification Helper
+// Expo Push Notification Helper
 
 import { getServiceClient } from "./auth.ts";
 
@@ -6,31 +6,30 @@ interface PushNotification {
   title: string;
   body: string;
   data?: Record<string, string>;
+  channelId?: string;
 }
 
-interface FCMMessage {
-  to?: string;
-  registration_ids?: string[];
-  notification: {
-    title: string;
-    body: string;
-    sound?: string;
-    badge?: number;
-  };
+interface ExpoPushMessage {
+  to: string;
+  title: string;
+  body: string;
   data?: Record<string, string>;
-  priority?: 'high' | 'normal';
-  content_available?: boolean;
+  channelId?: string;
+  sound: 'default';
+  priority: 'high';
 }
 
-interface FCMResponse {
-  multicast_id: number;
-  success: number;
-  failure: number;
-  results?: Array<{
-    message_id?: string;
-    error?: string;
-  }>;
+interface ExpoPushTicket {
+  status: 'ok' | 'error';
+  id?: string;
+  message?: string;
+  details?: {
+    error?: 'DeviceNotRegistered' | 'InvalidCredentials' | 'MessageTooBig' | 'MessageRateExceeded';
+  };
 }
+
+// Set to true to skip actual sending and just log (for dev without real tokens)
+const DEV_MODE = false;
 
 // Send push notification to a single user
 export async function sendPush(
@@ -76,16 +75,13 @@ export async function sendPushToUsers(
   return sendToTokens(tokenList, notification);
 }
 
-// Send push notification to specific tokens
+// Send push notification to specific tokens via Expo Push API
 export async function sendToTokens(
   tokens: string[],
   notification: PushNotification
 ): Promise<boolean> {
-  const serverKey = Deno.env.get('FCM_SERVER_KEY');
-
-  if (!serverKey) {
-    console.error('FCM_SERVER_KEY not configured');
-    console.log(`[DEV] Push notification:`, notification);
+  if (DEV_MODE) {
+    console.log(`[DEV] Push notification to ${tokens.length} token(s):`, notification);
     return true;
   }
 
@@ -94,60 +90,53 @@ export async function sendToTokens(
   }
 
   try {
-    // FCM has a limit of 1000 tokens per request
+    // Expo has a limit of 100 messages per request
     const batches: string[][] = [];
-    for (let i = 0; i < tokens.length; i += 1000) {
-      batches.push(tokens.slice(i, i + 1000));
+    for (let i = 0; i < tokens.length; i += 100) {
+      batches.push(tokens.slice(i, i + 100));
     }
 
     let totalSuccess = 0;
     let totalFailure = 0;
 
     for (const batch of batches) {
-      const message: FCMMessage = {
-        notification: {
-          title: notification.title,
-          body: notification.body,
-          sound: 'default',
-        },
+      const messages: ExpoPushMessage[] = batch.map(token => ({
+        to: token,
+        title: notification.title,
+        body: notification.body,
         data: notification.data,
-        priority: 'high',
-        content_available: true,
-      };
+        channelId: notification.channelId,
+        sound: 'default' as const,
+        priority: 'high' as const,
+      }));
 
-      if (batch.length === 1) {
-        message.to = batch[0];
-      } else {
-        message.registration_ids = batch;
-      }
-
-      const response = await fetch('https://fcm.googleapis.com/fcm/send', {
+      const response = await fetch('https://exp.host/--/api/v2/push/send', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `key=${serverKey}`,
         },
-        body: JSON.stringify(message),
+        body: JSON.stringify(messages),
       });
 
-      const result = await response.json() as FCMResponse;
+      const result = await response.json();
+      const tickets: ExpoPushTicket[] = result.data || [];
 
-      totalSuccess += result.success || 0;
-      totalFailure += result.failure || 0;
-
-      // Handle invalid tokens
-      if (result.results) {
-        const invalidTokens: string[] = [];
-        result.results.forEach((r, i) => {
-          if (r.error === 'NotRegistered' || r.error === 'InvalidRegistration') {
+      // Process tickets
+      const invalidTokens: string[] = [];
+      for (let i = 0; i < tickets.length; i++) {
+        if (tickets[i].status === 'ok') {
+          totalSuccess++;
+        } else {
+          totalFailure++;
+          if (tickets[i].details?.error === 'DeviceNotRegistered') {
             invalidTokens.push(batch[i]);
           }
-        });
-
-        // Remove invalid tokens from database
-        if (invalidTokens.length > 0) {
-          await removeInvalidTokens(invalidTokens);
         }
+      }
+
+      // Remove invalid tokens from database
+      if (invalidTokens.length > 0) {
+        await removeInvalidTokens(invalidTokens);
       }
     }
 
@@ -183,8 +172,12 @@ async function removeInvalidTokens(tokens: string[]): Promise<void> {
 export async function sendOrderPush(
   userId: string,
   orderNumber: string,
-  status: string
+  status: string,
+  orderId?: string
 ): Promise<boolean> {
+  const data: Record<string, string> = { type: 'order_update', order_number: orderNumber, status };
+  if (orderId) data.order_id = orderId;
+
   let notification: PushNotification;
 
   switch (status) {
@@ -192,42 +185,48 @@ export async function sendOrderPush(
       notification = {
         title: 'Order Confirmed',
         body: `Your order ${orderNumber} has been confirmed!`,
-        data: { type: 'order_update', order_number: orderNumber, status },
+        data,
+        channelId: 'orders',
       };
       break;
     case 'out_for_delivery':
       notification = {
         title: 'Out for Delivery',
         body: `Your order ${orderNumber} is on its way!`,
-        data: { type: 'order_update', order_number: orderNumber, status },
+        data,
+        channelId: 'orders',
       };
       break;
     case 'delivered':
       notification = {
         title: 'Order Delivered',
         body: `Your order ${orderNumber} has been delivered. Enjoy!`,
-        data: { type: 'order_update', order_number: orderNumber, status },
+        data,
+        channelId: 'orders',
       };
       break;
     case 'cancelled':
       notification = {
         title: 'Order Cancelled',
         body: `Your order ${orderNumber} has been cancelled.`,
-        data: { type: 'order_update', order_number: orderNumber, status },
+        data,
+        channelId: 'orders',
       };
       break;
     case 'delivery_failed':
       notification = {
         title: 'Delivery Attempt Failed',
         body: `We couldn't deliver your order ${orderNumber}. We'll retry soon.`,
-        data: { type: 'order_update', order_number: orderNumber, status },
+        data,
+        channelId: 'orders',
       };
       break;
     default:
       notification = {
         title: 'Order Update',
         body: `Your order ${orderNumber} status: ${status}`,
-        data: { type: 'order_update', order_number: orderNumber, status },
+        data,
+        channelId: 'orders',
       };
   }
 
@@ -247,6 +246,7 @@ export async function sendDeliveryAssignmentPush(
       type: 'delivery_assignment',
       order_number: orderNumber,
     },
+    channelId: 'orders',
   });
 }
 
@@ -278,5 +278,6 @@ export async function sendNewOrderPushToAdmins(
       type: 'new_order',
       order_number: orderNumber,
     },
+    channelId: 'orders',
   });
 }
