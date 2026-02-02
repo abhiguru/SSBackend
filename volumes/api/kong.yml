@@ -138,17 +138,6 @@ services:
                 - anon
                 - admin
 
-  ## Porter Webhook (unauthenticated - uses signature verification)
-  - name: porter-webhook
-    url: http://functions:9000/porter-webhook
-    routes:
-      - name: porter-webhook
-        strip_path: true
-        paths:
-          - /functions/v1/porter-webhook
-        plugins:
-          - name: cors
-
   ## Postgres Meta
   - name: meta
     url: http://meta:8080/

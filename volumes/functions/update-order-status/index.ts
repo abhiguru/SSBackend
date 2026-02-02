@@ -12,7 +12,6 @@ interface UpdateStatusRequest {
   order_id: string;
   status: 'confirmed' | 'out_for_delivery' | 'cancelled';
   delivery_staff_id?: string;
-  delivery_type?: 'in_house' | 'porter';
   notes?: string;
   cancellation_reason?: string;
 }
@@ -65,18 +64,6 @@ export async function handler(req: Request): Promise<Response> {
     const currentStatus = order.status as string;
     const newStatus = body.status;
 
-    // Block manual status changes for Porter deliveries in progress
-    if (order.delivery_type === 'porter' && order.status === 'out_for_delivery') {
-      // Only allow cancellation for Porter orders
-      if (newStatus !== 'cancelled') {
-        return errorResponse(
-          'PORTER_IN_PROGRESS',
-          'Cannot manually change status for Porter deliveries. Use porter-cancel to cancel or wait for Porter webhook.',
-          400
-        );
-      }
-    }
-
     const allowedTransitions = validTransitions[currentStatus] || [];
     if (!allowedTransitions.includes(newStatus)) {
       return errorResponse(
@@ -94,16 +81,7 @@ export async function handler(req: Request): Promise<Response> {
 
     // Handle specific status requirements
     if (newStatus === 'out_for_delivery') {
-      // Check if attempting to use Porter delivery via this endpoint
-      if (body.delivery_type === 'porter') {
-        return errorResponse(
-          'USE_PORTER_ENDPOINT',
-          'Use the porter-book endpoint for Porter delivery',
-          400
-        );
-      }
-
-      // Require delivery staff for in-house delivery
+      // Require delivery staff
       if (!body.delivery_staff_id) {
         return errorResponse('MISSING_DELIVERY_STAFF', 'Delivery staff must be assigned', 400);
       }
@@ -144,8 +122,6 @@ export async function handler(req: Request): Promise<Response> {
       updateData.delivery_staff_id = body.delivery_staff_id;
       updateData.delivery_otp_hash = otpHash;
       updateData.delivery_otp_expires = otpExpiry;
-      updateData.delivery_type = 'in_house';
-
       // Send delivery OTP to customer
       const customerPhone = (order.user as { phone: string })?.phone || order.shipping_phone;
       sendDeliveryOTPSMS(customerPhone, order.order_number, deliveryOTP).catch(console.error);
@@ -164,7 +140,6 @@ export async function handler(req: Request): Promise<Response> {
     if (updateData.delivery_staff_id !== undefined) rpcUpdateData.delivery_staff_id = updateData.delivery_staff_id;
     if (updateData.delivery_otp_hash !== undefined) rpcUpdateData.delivery_otp_hash = updateData.delivery_otp_hash;
     if (updateData.delivery_otp_expires !== undefined) rpcUpdateData.delivery_otp_expires = updateData.delivery_otp_expires;
-    if (updateData.delivery_type !== undefined) rpcUpdateData.delivery_type = updateData.delivery_type;
     if (updateData.cancellation_reason !== undefined) rpcUpdateData.cancellation_reason = updateData.cancellation_reason;
 
     // Update order + record status history atomically
@@ -188,7 +163,7 @@ export async function handler(req: Request): Promise<Response> {
     // Send notifications to customer
     const customerPhone = (order.user as { phone: string })?.phone || order.shipping_phone;
     sendOrderStatusSMS(customerPhone, order.order_number, newStatus).catch(console.error);
-    sendOrderPush(order.user_id, order.order_number, newStatus).catch(console.error);
+    sendOrderPush(order.user_id, order.order_number, newStatus, order.id).catch(console.error);
 
     return jsonResponse({
       success: true,

@@ -204,11 +204,6 @@ services:
       MSG91_SENDER_ID: ${MSG91_SENDER_ID:-MSSHOP}
       FCM_SERVER_KEY: ${FCM_SERVER_KEY}
       OTP_SECRET: ${OTP_SECRET}
-      # Porter delivery integration
-      PORTER_API_KEY: ${PORTER_API_KEY:-}
-      PORTER_WEBHOOK_SECRET: ${PORTER_WEBHOOK_SECRET:-}
-      PORTER_ENV: ${PORTER_ENV:-mock}
-      GOOGLE_GEOCODING_API_KEY: ${GOOGLE_GEOCODING_API_KEY:-}
     volumes:
       - ./volumes/functions:/home/deno/functions:Z
     command:

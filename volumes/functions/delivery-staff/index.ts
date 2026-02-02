@@ -47,7 +47,6 @@ export async function handler(req: Request): Promise<Response> {
       .from('orders')
       .select('delivery_staff_id')
       .eq('status', 'out_for_delivery')
-      .eq('delivery_type', 'in_house')
       .not('delivery_staff_id', 'is', null);
 
     const busyStaffIds = new Set(
