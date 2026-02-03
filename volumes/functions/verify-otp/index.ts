@@ -181,8 +181,9 @@ export async function handler(req: Request): Promise<Response> {
       return errorResponse('ACCOUNT_DEACTIVATED', 'Your account has been deactivated', 403);
     }
 
-    // Update user name if provided and different
-    if (body.name && body.name !== user.name) {
+    // Update user name only for new users if provided
+    // (Don't auto-update existing users' names on every login)
+    if (isNewUser && body.name && body.name !== user.name) {
       await supabase
         .from('users')
         .update({ name: body.name })
