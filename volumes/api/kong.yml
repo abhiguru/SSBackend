@@ -35,6 +35,7 @@ basicauth_credentials:
 ###
 services:
   ## PostgREST - Database REST API
+  ## PERFORMANCE: Items 23-24 - Rate limiting and request tracking
   - name: rest-v1
     url: http://rest:3000/
     routes:
@@ -53,6 +54,18 @@ services:
               allow:
                 - anon
                 - admin
+          # Item 23: Gateway-level rate limiting
+          - name: rate-limiting
+            config:
+              minute: 120
+              policy: local
+              hide_client_headers: false
+          # Item 24: Request ID tracking for debugging
+          - name: correlation-id
+            config:
+              header_name: X-Request-ID
+              generator: uuid
+              echo_downstream: true
 
   ## PostgREST RPC (remote procedure calls)
   - name: rest-v1-rpc
@@ -73,10 +86,22 @@ services:
               allow:
                 - anon
                 - admin
+          # Item 23: Rate limiting for RPC calls
+          - name: rate-limiting
+            config:
+              minute: 60
+              policy: local
+              hide_client_headers: false
+          - name: correlation-id
+            config:
+              header_name: X-Request-ID
+              generator: uuid
+              echo_downstream: true
 
   ## Storage API - Public objects (no auth required)
   ## Must be listed before the authenticated storage route so Kong
   ## matches the more-specific path first.
+  ## PERFORMANCE: Item 22 - Response caching for static assets
   - name: storage-v1-public
     url: http://storage:5000/object/public/
     routes:
@@ -86,6 +111,24 @@ services:
           - /storage/v1/object/public/
         plugins:
           - name: cors
+          # Item 22: Cache public storage objects
+          - name: proxy-cache
+            config:
+              response_code:
+                - 200
+              request_method:
+                - GET
+                - HEAD
+              content_type:
+                - image/png
+                - image/jpeg
+                - image/webp
+                - image/gif
+                - image/svg+xml
+              cache_ttl: 3600
+              strategy: memory
+              memory:
+                dictionary_name: kong_db_cache
 
   ## Storage API - Render/transform (public images via imgproxy, no auth)
   - name: storage-v1-render-public
@@ -97,6 +140,22 @@ services:
           - /storage/v1/render/image/public/
         plugins:
           - name: cors
+          # Item 22: Cache transformed images
+          - name: proxy-cache
+            config:
+              response_code:
+                - 200
+              request_method:
+                - GET
+                - HEAD
+              content_type:
+                - image/png
+                - image/jpeg
+                - image/webp
+              cache_ttl: 3600
+              strategy: memory
+              memory:
+                dictionary_name: kong_db_cache
 
   ## Storage API (authenticated)
   - name: storage-v1
@@ -117,6 +176,15 @@ services:
               allow:
                 - anon
                 - admin
+          - name: rate-limiting
+            config:
+              minute: 100
+              policy: local
+          - name: correlation-id
+            config:
+              header_name: X-Request-ID
+              generator: uuid
+              echo_downstream: true
 
   ## Edge Functions - Shiprocket Webhook (no API key required, auth via anx-api-key header)
   ## Two routes: original path + short /webhook alias for Shiprocket dashboard
@@ -129,6 +197,11 @@ services:
           - /functions/v1/shiprocket-webhook
         plugins:
           - name: cors
+          - name: correlation-id
+            config:
+              header_name: X-Request-ID
+              generator: uuid
+              echo_downstream: true
       - name: shiprocket-webhook-short
         strip_path: true
         paths:
@@ -155,6 +228,17 @@ services:
               allow:
                 - anon
                 - admin
+          # Item 23: Rate limiting for edge functions
+          - name: rate-limiting
+            config:
+              minute: 60
+              policy: local
+              hide_client_headers: false
+          - name: correlation-id
+            config:
+              header_name: X-Request-ID
+              generator: uuid
+              echo_downstream: true
 
   ## Postgres Meta
   - name: meta
@@ -174,3 +258,8 @@ services:
               hide_groups_header: true
               allow:
                 - admin
+          # Stricter rate limit for admin endpoints
+          - name: rate-limiting
+            config:
+              minute: 30
+              policy: local

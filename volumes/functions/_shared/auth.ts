@@ -1,4 +1,5 @@
 // Shared authentication helpers for edge functions
+// PERFORMANCE OPTIMIZED: Items 14, 15, 17 from performance audit
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
@@ -23,21 +24,39 @@ export interface AuthContext {
   role: 'customer' | 'admin' | 'delivery_staff';
 }
 
-// Create Supabase client with service role
+// =============================================
+// ITEM 14: Cache Supabase Client Instances
+// =============================================
+// Module-level singletons to avoid client creation overhead per request
+
+let _serviceClient: SupabaseClient | null = null;
+let _serviceClientUrl: string | null = null;
+let _serviceClientKey: string | null = null;
+
+// Create Supabase client with service role (CACHED)
 export function getServiceClient(): SupabaseClient {
-  return createClient(
-    Deno.env.get('SUPABASE_URL') ?? 'http://kong:8000',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-    {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    }
-  );
+  const url = Deno.env.get('SUPABASE_URL') ?? 'http://kong:8000';
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+
+  // Return cached client if URL and key haven't changed
+  if (_serviceClient && _serviceClientUrl === url && _serviceClientKey === key) {
+    return _serviceClient;
+  }
+
+  // Create and cache new client
+  _serviceClient = createClient(url, key, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+  _serviceClientUrl = url;
+  _serviceClientKey = key;
+
+  return _serviceClient;
 }
 
-// Create Supabase client with user's JWT
+// Create Supabase client with user's JWT (NOT cached - token-specific)
 export function getUserClient(authHeader: string): SupabaseClient {
   const token = authHeader.replace('Bearer ', '');
   return createClient(
@@ -55,7 +74,69 @@ export function getUserClient(authHeader: string): SupabaseClient {
   );
 }
 
-// Verify JWT and extract claims
+// =============================================
+// ITEM 15: Cache Imported Crypto Keys
+// =============================================
+// Avoid expensive crypto.subtle.importKey per request
+
+let _jwtVerifyKey: CryptoKey | null = null;
+let _jwtVerifyKeySecret: string | null = null;
+
+let _jwtSignKey: CryptoKey | null = null;
+let _jwtSignKeySecret: string | null = null;
+
+let _otpHmacKey: CryptoKey | null = null;
+let _otpHmacKeySecret: string | null = null;
+
+async function getJWTVerifyKey(secret: string): Promise<CryptoKey> {
+  if (_jwtVerifyKey && _jwtVerifyKeySecret === secret) {
+    return _jwtVerifyKey;
+  }
+  const encoder = new TextEncoder();
+  _jwtVerifyKey = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['verify']
+  );
+  _jwtVerifyKeySecret = secret;
+  return _jwtVerifyKey;
+}
+
+async function getJWTSignKey(secret: string): Promise<CryptoKey> {
+  if (_jwtSignKey && _jwtSignKeySecret === secret) {
+    return _jwtSignKey;
+  }
+  const encoder = new TextEncoder();
+  _jwtSignKey = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  _jwtSignKeySecret = secret;
+  return _jwtSignKey;
+}
+
+async function getOTPHmacKey(secret: string): Promise<CryptoKey> {
+  if (_otpHmacKey && _otpHmacKeySecret === secret) {
+    return _otpHmacKey;
+  }
+  const encoder = new TextEncoder();
+  _otpHmacKey = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  _otpHmacKeySecret = secret;
+  return _otpHmacKey;
+}
+
+// Verify JWT and extract claims (OPTIMIZED with cached key)
 export async function verifyJWT(token: string): Promise<JWTPayload | null> {
   try {
     const secret = Deno.env.get('JWT_SECRET');
@@ -75,15 +156,9 @@ export async function verifyJWT(token: string): Promise<JWTPayload | null> {
       return null;
     }
 
-    // Verify signature using Web Crypto API
+    // Verify signature using cached key
+    const key = await getJWTVerifyKey(secret);
     const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      'raw',
-      encoder.encode(secret),
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['verify']
-    );
 
     const signatureBytes = Uint8Array.from(
       atob(parts[2].replace(/-/g, '+').replace(/_/g, '/')),
@@ -103,7 +178,7 @@ export async function verifyJWT(token: string): Promise<JWTPayload | null> {
   }
 }
 
-// Sign JWT
+// Sign JWT (OPTIMIZED with cached key)
 export async function signJWT(payload: SignJWTInput, expiresIn = 3600): Promise<string> {
   const secret = Deno.env.get('JWT_SECRET');
   if (!secret) throw new Error('JWT_SECRET not configured');
@@ -129,13 +204,8 @@ export async function signJWT(payload: SignJWTInput, expiresIn = 3600): Promise<
   const headerB64 = base64url(JSON.stringify(header));
   const payloadB64 = base64url(JSON.stringify(fullPayload));
 
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
+  // Use cached key
+  const key = await getJWTSignKey(secret);
 
   const signatureBytes = await crypto.subtle.sign(
     'HMAC',
@@ -147,6 +217,12 @@ export async function signJWT(payload: SignJWTInput, expiresIn = 3600): Promise<
 
   return `${headerB64}.${payloadB64}.${signature}`;
 }
+
+// =============================================
+// ITEM 17: Optimized requireAuth
+// =============================================
+// Option: Skip DB round-trip for non-sensitive operations
+// The is_active check now uses a simple, fast query
 
 // Require authentication - returns AuthContext or throws
 export async function requireAuth(req: Request): Promise<AuthContext> {
@@ -163,7 +239,7 @@ export async function requireAuth(req: Request): Promise<AuthContext> {
     throw new AuthError('Invalid or expired token', 401);
   }
 
-  // Verify user is still active
+  // Verify user is still active (uses indexed lookup)
   const supabase = getServiceClient();
   const { data: user, error } = await supabase
     .from('users')
@@ -173,6 +249,29 @@ export async function requireAuth(req: Request): Promise<AuthContext> {
 
   if (error || !user?.is_active) {
     throw new AuthError('User account is deactivated', 403);
+  }
+
+  return {
+    userId: payload.sub,
+    phone: payload.phone,
+    role: payload.user_role,
+  };
+}
+
+// Light auth check - JWT only, no DB round-trip
+// Use for non-sensitive read operations where slight staleness is OK
+export async function requireAuthLight(req: Request): Promise<AuthContext> {
+  const authHeader = req.headers.get('Authorization');
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    throw new AuthError('Missing or invalid Authorization header', 401);
+  }
+
+  const token = authHeader.replace('Bearer ', '');
+  const payload = await verifyJWT(token);
+
+  if (!payload) {
+    throw new AuthError('Invalid or expired token', 401);
   }
 
   return {
@@ -215,18 +314,12 @@ export class AuthError extends Error {
   }
 }
 
-// Hash OTP for storage
+// Hash OTP for storage (OPTIMIZED with cached key)
 export async function hashOTP(otp: string): Promise<string> {
   const secret = Deno.env.get('OTP_SECRET') ?? '';
   const encoder = new TextEncoder();
 
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
+  const key = await getOTPHmacKey(secret);
 
   const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(otp));
 

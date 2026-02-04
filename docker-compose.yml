@@ -15,21 +15,45 @@ services:
   # ===========================================
   # PostgreSQL Database
   # ===========================================
+  # PERFORMANCE: Items 26-29, 32-33 from audit
   db:
     image: supabase/postgres:15.8.1.060
     container_name: masala-db
     restart: unless-stopped
+    # Item 33: Increased health check interval (was 5s)
     healthcheck:
       test: pg_isready -U postgres -h localhost
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      interval: 30s
+      timeout: 10s
+      retries: 5
     command:
       - postgres
       - -c
       - config_file=/etc/postgresql/postgresql.conf
+      # Item 27: Enable slow query logging (queries > 1s)
       - -c
-      - log_min_messages=fatal
+      - log_min_messages=warning
+      - -c
+      - log_min_duration_statement=1000
+      # Item 26: PostgreSQL Memory Tuning
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=128MB
+      # Item 28: WAL Settings for Write Performance
+      - -c
+      - max_wal_size=2GB
+      - -c
+      - checkpoint_completion_target=0.9
+      # Item 29: Enable pg_stat_statements
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
     ports:
       - "127.0.0.1:5534:5432"
     environment:
@@ -45,6 +69,15 @@ services:
     volumes:
       - masala_db-config:/etc/postgresql-custom
       - ./volumes/db/init:/docker-entrypoint-initdb.d:Z
+    # Item 32: Resource Limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
     networks:
       default:
         ipv4_address: 172.21.0.5
@@ -52,6 +85,7 @@ services:
   # ===========================================
   # Kong API Gateway
   # ===========================================
+  # PERFORMANCE: Items 22-25, 32 from audit
   kong:
     image: kong:2.8.1
     container_name: masala-kong
@@ -66,7 +100,8 @@ services:
       KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
       KONG_DNS_ORDER: LAST,A,CNAME
-      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
+      # Item 25: Only enable plugins actually used (+ rate-limiting, proxy-cache)
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth,rate-limiting,proxy-cache,correlation-id
       KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
       KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
       SUPABASE_ANON_KEY: ${ANON_KEY}
@@ -80,6 +115,15 @@ services:
       - "storage:172.21.0.11"
       - "functions:172.21.0.12"
       - "meta:172.21.0.14"
+    # Item 32: Resource Limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
     networks:
       default:
         ipv4_address: 172.21.0.2
@@ -87,6 +131,7 @@ services:
   # ===========================================
   # PostgREST
   # ===========================================
+  # PERFORMANCE: Item 30 from audit - Connection Pool Settings
   rest:
     image: postgrest/postgrest:v12.2.0
     container_name: masala-rest
@@ -102,7 +147,21 @@ services:
       PGRST_DB_USE_LEGACY_GUCS: "false"
       PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
       PGRST_APP_SETTINGS_JWT_EXP: 3600
+      # Item 30: Connection Pool Configuration
+      PGRST_DB_POOL: "20"
+      PGRST_DB_POOL_ACQUISITION_TIMEOUT: "10"
+      PGRST_DB_POOL_MAX_IDLETIME: "30"
+      PGRST_DB_MAX_ROWS: "1000"
     command: postgrest
+    # Item 32: Resource Limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
     networks:
       default:
         ipv4_address: 172.21.0.10
@@ -110,21 +169,17 @@ services:
   # ===========================================
   # Supabase Storage
   # ===========================================
+  # PERFORMANCE: Items 33-34 from audit - Health Check Optimization
   storage:
     image: supabase/storage-api:v1.11.13
     container_name: masala-storage
     restart: unless-stopped
+    # Item 33-34: Optimized health check intervals
     healthcheck:
-      test:
-        - CMD
-        - wget
-        - --no-verbose
-        - --tries=1
-        - --spider
-        - http://127.0.0.1:5000/status
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:5000/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     depends_on:
       db:
         condition: service_healthy
@@ -155,18 +210,20 @@ services:
   # ===========================================
   # Image Proxy
   # ===========================================
+  # PERFORMANCE: Items 32-33 from audit
   imgproxy:
     image: darthsim/imgproxy:v3.8.0
     container_name: masala-imgproxy
     restart: unless-stopped
+    # Item 33: Increased health check interval
     healthcheck:
       test:
         - CMD
         - imgproxy
         - health
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      interval: 30s
+      timeout: 10s
+      retries: 3
     environment:
       IMGPROXY_BIND: ":5001"
       IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
@@ -176,6 +233,15 @@ services:
       IMGPROXY_SET_CACHE_CONTROL: "public, max-age=31536000"
     volumes:
       - masala_storage:/var/lib/storage:z
+    # Item 32: Resource Limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
     networks:
       default:
         ipv4_address: 172.21.0.17
@@ -183,6 +249,7 @@ services:
   # ===========================================
   # Edge Functions Runtime
   # ===========================================
+  # PERFORMANCE: Item 32 from audit
   functions:
     image: supabase/edge-runtime:v1.65.3
     container_name: masala-functions
@@ -214,6 +281,15 @@ services:
       - start
       - --main-service
       - /home/deno/functions/main
+    # Item 32: Resource Limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
     networks:
       default:
         ipv4_address: 172.21.0.12
@@ -276,10 +352,12 @@ services:
   # ===========================================
   # Supavisor Connection Pooler
   # ===========================================
+  # PERFORMANCE: Items 31-33 from audit
   supavisor:
     image: supabase/supavisor:1.1.56
     container_name: masala-supavisor
     restart: unless-stopped
+    # Item 33: Increased health check interval
     healthcheck:
       test:
         - CMD
@@ -289,9 +367,9 @@ services:
         - -o
         - /dev/null
         - http://127.0.0.1:4000/api/health
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 30s
+      timeout: 10s
+      retries: 3
     ports:
       - "127.0.0.1:5535:5432"
       - "127.0.0.1:6643:6543"
@@ -313,11 +391,23 @@ services:
       METRICS_JWT_SECRET: ${JWT_SECRET}
       REGION: local
       ERL_AFLAGS: -proto_dist inet_tcp
+      # Item 31: Pool Settings
+      DB_POOL_SIZE: "20"
+      POOL_IDLE_TIMEOUT: "30000"
     command:
       - /bin/sh
       - -c
       - |
         /app/bin/migrate && /app/bin/supavisor start
+    # Item 32: Resource Limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
     networks:
       default:
         ipv4_address: 172.21.0.18

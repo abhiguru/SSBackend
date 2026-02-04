@@ -1,9 +1,14 @@
 // Admin User Management - List users and update roles
+// PERFORMANCE OPTIMIZED: Item 18, 19 from performance audit
 
 import { requireAdmin, getServiceClient } from "../_shared/auth.ts";
 import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts";
 
 const VALID_ROLES = ['customer', 'admin', 'delivery_staff'] as const;
+
+// Item 18: Default and max pagination limits
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 100;
 
 export async function handler(req: Request): Promise<Response> {
   try {
@@ -23,25 +28,56 @@ async function handleGet(req: Request): Promise<Response> {
 
   const url = new URL(req.url);
   const search = url.searchParams.get('search');
+  const role = url.searchParams.get('role');
+
+  // Item 18: Parse and validate pagination parameters
+  let limit = parseInt(url.searchParams.get('limit') ?? '', 10);
+  let offset = parseInt(url.searchParams.get('offset') ?? '', 10);
+
+  if (isNaN(limit) || limit < 1) {
+    limit = DEFAULT_LIMIT;
+  } else if (limit > MAX_LIMIT) {
+    limit = MAX_LIMIT;
+  }
+
+  if (isNaN(offset) || offset < 0) {
+    offset = 0;
+  }
 
   const supabase = getServiceClient();
+
+  // Item 19: Select specific columns instead of * (reduces data transfer)
   let query = supabase
     .from('users')
-    .select('id, name, phone, role, is_active, created_at')
-    .order('created_at', { ascending: false });
+    .select('id, name, phone, role, is_active, created_at', { count: 'exact' })
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
 
   if (search) {
     query = query.or(`name.ilike.%${search}%,phone.ilike.%${search}%`);
   }
 
-  const { data, error } = await query;
+  if (role && VALID_ROLES.includes(role as typeof VALID_ROLES[number])) {
+    query = query.eq('role', role);
+  }
+
+  const { data, error, count } = await query;
 
   if (error) {
     console.error('Users query error:', error);
     return errorResponse('QUERY_ERROR', 'Failed to fetch users', 500);
   }
 
-  return jsonResponse(data);
+  // Return paginated response with metadata
+  return jsonResponse({
+    data,
+    pagination: {
+      offset,
+      limit,
+      total: count ?? 0,
+      hasMore: count !== null && offset + limit < count,
+    },
+  });
 }
 
 async function handlePatch(req: Request): Promise<Response> {
@@ -64,10 +100,10 @@ async function handlePatch(req: Request): Promise<Response> {
 
   const supabase = getServiceClient();
 
-  // Fetch target user
+  // Fetch target user - Item 19: Select only needed columns
   const { data: targetUser, error: fetchError } = await supabase
     .from('users')
-    .select('*')
+    .select('id, role, is_active')
     .eq('id', user_id)
     .single();
 

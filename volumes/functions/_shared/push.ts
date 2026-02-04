@@ -1,4 +1,5 @@
 // Expo Push Notification Helper
+// PERFORMANCE OPTIMIZED: Item 20 from performance audit
 
 import { getServiceClient } from "./auth.ts";
 
@@ -76,6 +77,7 @@ export async function sendPushToUsers(
 }
 
 // Send push notification to specific tokens via Expo Push API
+// ITEM 20: Batch Invalid Push Token Removal
 export async function sendToTokens(
   tokens: string[],
   notification: PushNotification
@@ -99,6 +101,9 @@ export async function sendToTokens(
     let totalSuccess = 0;
     let totalFailure = 0;
 
+    // OPTIMIZED: Collect all invalid tokens across batches
+    const allInvalidTokens: string[] = [];
+
     for (const batch of batches) {
       const messages: ExpoPushMessage[] = batch.map(token => ({
         to: token,
@@ -121,23 +126,22 @@ export async function sendToTokens(
       const result = await response.json();
       const tickets: ExpoPushTicket[] = result.data || [];
 
-      // Process tickets
-      const invalidTokens: string[] = [];
+      // Process tickets and collect invalid tokens
       for (let i = 0; i < tickets.length; i++) {
         if (tickets[i].status === 'ok') {
           totalSuccess++;
         } else {
           totalFailure++;
           if (tickets[i].details?.error === 'DeviceNotRegistered') {
-            invalidTokens.push(batch[i]);
+            allInvalidTokens.push(batch[i]);
           }
         }
       }
+    }
 
-      // Remove invalid tokens from database
-      if (invalidTokens.length > 0) {
-        await removeInvalidTokens(invalidTokens);
-      }
+    // OPTIMIZED: Single DELETE for all invalid tokens instead of per-batch
+    if (allInvalidTokens.length > 0) {
+      await removeInvalidTokensBatch(allInvalidTokens);
     }
 
     console.log(`Push notification sent: ${totalSuccess} success, ${totalFailure} failure`);
@@ -148,11 +152,14 @@ export async function sendToTokens(
   }
 }
 
-// Remove invalid tokens from database
-async function removeInvalidTokens(tokens: string[]): Promise<void> {
+// ITEM 20: Batch remove invalid tokens in single query
+async function removeInvalidTokensBatch(tokens: string[]): Promise<void> {
+  if (tokens.length === 0) return;
+
   try {
     const supabase = getServiceClient();
 
+    // Single DELETE for all tokens
     const { error } = await supabase
       .from('push_tokens')
       .delete()
