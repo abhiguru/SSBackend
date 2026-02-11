@@ -160,6 +160,33 @@ sudo systemctl restart masala.service
 sudo systemctl stop masala.service
 ```
 
+### Debugging Startup Issues
+
+Startup log file:
+```bash
+cat logs/masala-startup.log
+```
+
+Systemd / journald logs:
+```bash
+sudo journalctl -u masala.service -n 50 --no-pager
+sudo journalctl -u masala.service --since "10 min ago"
+```
+
+Individual container logs:
+```bash
+docker compose logs db          # PostgreSQL
+docker compose logs kong        # API gateway
+docker compose logs functions   # Edge functions
+docker compose logs rest        # PostgREST
+```
+
+Common failure scenarios:
+- **Port conflict**: Another process grabbed a Masala port. Check with `ss -tlnp | grep <port>`.
+- **DB not ready**: `pg_isready` times out. Check `docker compose logs db` for disk/permission errors.
+- **Docker socket**: systemd runs as `gcswebserver`; ensure the user is in the `docker` group.
+- **Volume permission**: After host OS upgrade, volume UIDs may shift. Recreate the data volume if needed (see below).
+
 **Re-initializing from scratch**: If you need to rebuild the database from init scripts, remove the data volume and restart:
 
 ```bash

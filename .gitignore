@@ -8,6 +8,7 @@ volumes/storage/*
 !volumes/storage/.gitkeep
 
 # Logs
+logs/
 volumes/logs/**/*.log
 *.log
 
