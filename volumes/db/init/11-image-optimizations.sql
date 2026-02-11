@@ -15,9 +15,13 @@
 -- The authenticated path (/object/authenticated/...) still works for
 -- the mobile app which sends auth headers.
 
-UPDATE storage.buckets
-SET public = true
-WHERE id = 'product-images';
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'storage' AND table_name = 'buckets' AND column_name = 'public') THEN
+        UPDATE storage.buckets SET public = true WHERE id = 'product-images';
+    END IF;
+END
+$$;
 
 -- =============================================
 -- RPC: register_and_confirm_product_image

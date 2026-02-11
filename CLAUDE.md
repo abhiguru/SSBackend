@@ -148,6 +148,26 @@ CORS headers are centralized in `volumes/functions/_shared/cors.ts`. The wildcar
 
 Shared response helpers are in `volumes/functions/_shared/response.ts` (`jsonResponse`, `errorResponse`, `handleError`).
 
+## Database Persistence & Auto-Start
+
+PostgreSQL data is stored in the `masala_db-data` named Docker volume, mounted at `/var/lib/postgresql/data`. Init scripts in `volumes/db/init/` only run on first creation (when the data directory is empty). Data survives container restarts and reboots.
+
+A systemd service (`masala.service`) auto-starts the stack on boot. Management commands:
+
+```bash
+sudo systemctl status masala.service
+sudo systemctl restart masala.service
+sudo systemctl stop masala.service
+```
+
+**Re-initializing from scratch**: If you need to rebuild the database from init scripts, remove the data volume and restart:
+
+```bash
+docker compose down
+docker volume rm masala_masala_db-data
+docker compose up -d
+```
+
 ## Key Implementation Details
 
 - Prices stored in paise (₹1 = 100 paise)

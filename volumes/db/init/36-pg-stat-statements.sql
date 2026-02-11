@@ -8,10 +8,16 @@
 BEGIN;
 
 -- Create the extension if it doesn't exist
-CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements SCHEMA extensions;
 
--- Grant access to authenticated users for monitoring
-GRANT EXECUTE ON FUNCTION pg_stat_statements_reset() TO service_role;
+-- Grant access to monitoring functions
+DO $$
+BEGIN
+    EXECUTE 'GRANT EXECUTE ON FUNCTION extensions.pg_stat_statements_reset() TO service_role';
+EXCEPTION WHEN undefined_function THEN
+    NULL; -- Function may not exist in this pg_stat_statements version
+END
+$$;
 
 -- Create a helper view for easy query analysis
 CREATE OR REPLACE VIEW public.slow_queries AS

@@ -14,7 +14,14 @@ DELETE FROM weight_options;
 DELETE FROM product_images;
 DELETE FROM products;
 
--- Step 2: Categories are kept as-is (spices, dried-goods, powders, spice-mixes)
+-- Step 2: Replace categories with canonical set using fixed UUIDs
+DELETE FROM categories;
+INSERT INTO categories (id, name, name_gu, slug, display_order, is_active) VALUES
+    ('a1000000-0000-0000-0000-000000000001', 'Spices',      'મસાલા',         'spices',      1, true),
+    ('a1000000-0000-0000-0000-000000000002', 'Dried Goods',  'સૂકી વસ્તુઓ',    'dried-goods',  2, true),
+    ('a1000000-0000-0000-0000-000000000003', 'Powders',      'પાવડર',          'powders',      3, true),
+    ('a1000000-0000-0000-0000-000000000004', 'Spice Mixes',  'મસાલા મિશ્રણ',   'spice-mixes',  4, true)
+ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, name_gu = EXCLUDED.name_gu, slug = EXCLUDED.slug, display_order = EXCLUDED.display_order;
 
 -- Step 3: Insert new products
 -- Using the fixed category UUIDs from the live database.
@@ -125,7 +132,13 @@ INSERT INTO products (category_id, name, name_gu, price_per_kg_paise, is_availab
 ('a1000000-0000-0000-0000-000000000004', 'Jiralu Powder',                'જીરાળું (સ્પે. ખાખરા)',          30000, true, true, 11),
 ('a1000000-0000-0000-0000-000000000004', 'Vadapav Masala',               'વડાપાવ નો મસાલો',              35000, true, true, 12);
 
--- Clean up orphaned storage objects
-DELETE FROM storage.objects WHERE bucket_id = 'product-images';
+-- Clean up orphaned storage objects (if storage tables exist)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 'objects') THEN
+        DELETE FROM storage.objects WHERE bucket_id = 'product-images';
+    END IF;
+END
+$$;
 
 COMMIT;

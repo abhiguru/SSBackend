@@ -6,6 +6,12 @@
 -- Create auth schema if not exists
 CREATE SCHEMA IF NOT EXISTS auth;
 
+-- Drop built-in auth functions that have incompatible return types
+DROP FUNCTION IF EXISTS auth.uid();
+DROP FUNCTION IF EXISTS auth.role();
+DROP FUNCTION IF EXISTS auth.email();
+DROP FUNCTION IF EXISTS auth.jwt();
+
 -- =============================================
 -- auth.uid() - Extract user ID from JWT
 -- =============================================
@@ -134,7 +140,7 @@ BEGIN
         CREATE ROLE anon NOLOGIN;
     END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticator') THEN
-        CREATE ROLE authenticator NOINHERIT LOGIN PASSWORD current_setting('app.settings.postgres_password', true);
+        CREATE ROLE authenticator NOINHERIT LOGIN;
     END IF;
 END
 $$;

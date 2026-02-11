@@ -9,14 +9,29 @@
 -- STORAGE BUCKET
 -- =============================================
 
-INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES (
-    'product-images',
-    'product-images',
-    true,     -- Public: product images are displayed on the marketing website via <img> tags
-    5242880,  -- 5MB per file
-    ARRAY['image/jpeg', 'image/png', 'image/webp']
-) ON CONFLICT (id) DO UPDATE SET public = true;
+-- Storage bucket creation is deferred — the storage service adds columns
+-- (public, file_size_limit, allowed_mime_types) via its own migrations.
+-- The bucket is created after storage service init via a separate step.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'storage' AND table_name = 'buckets' AND column_name = 'public') THEN
+        INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+        VALUES (
+            'product-images',
+            'product-images',
+            true,
+            5242880,
+            ARRAY['image/jpeg', 'image/png', 'image/webp']
+        ) ON CONFLICT (id) DO UPDATE SET public = true;
+    ELSE
+        -- Just insert minimal bucket; storage service will add columns later
+        INSERT INTO storage.buckets (id, name)
+        VALUES ('product-images', 'product-images')
+        ON CONFLICT (id) DO NOTHING;
+        RAISE NOTICE 'storage.buckets missing public column — bucket created with defaults';
+    END IF;
+END
+$$;
 
 -- =============================================
 -- PRODUCT_IMAGES TABLE
@@ -108,30 +123,34 @@ CREATE POLICY "product_images_admin_delete" ON product_images
 -- RLS ON storage.objects FOR product-images BUCKET
 -- =============================================
 
-CREATE POLICY "product-images-read" ON storage.objects
-    FOR SELECT TO authenticated
-    USING (bucket_id = 'product-images');
-
-CREATE POLICY "product-images-upload" ON storage.objects
-    FOR INSERT TO authenticated
-    WITH CHECK (
-        bucket_id = 'product-images'
-        AND (select auth.is_admin())
-    );
-
-CREATE POLICY "product-images-update" ON storage.objects
-    FOR UPDATE TO authenticated
-    USING (
-        bucket_id = 'product-images'
-        AND (select auth.is_admin())
-    );
-
-CREATE POLICY "product-images-delete" ON storage.objects
-    FOR DELETE TO authenticated
-    USING (
-        bucket_id = 'product-images'
-        AND (select auth.is_admin())
-    );
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 'objects') THEN
+        CREATE POLICY "product-images-read" ON storage.objects
+            FOR SELECT TO authenticated
+            USING (bucket_id = 'product-images');
+        CREATE POLICY "product-images-upload" ON storage.objects
+            FOR INSERT TO authenticated
+            WITH CHECK (
+                bucket_id = 'product-images'
+                AND (select auth.is_admin())
+            );
+        CREATE POLICY "product-images-update" ON storage.objects
+            FOR UPDATE TO authenticated
+            USING (
+                bucket_id = 'product-images'
+                AND (select auth.is_admin())
+            );
+        CREATE POLICY "product-images-delete" ON storage.objects
+            FOR DELETE TO authenticated
+            USING (
+                bucket_id = 'product-images'
+                AND (select auth.is_admin())
+            );
+    ELSE
+        RAISE NOTICE 'storage.objects not yet created — skipping storage RLS policies';
+    END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- =============================================
 -- RLS ON storage.buckets
@@ -140,35 +159,31 @@ CREATE POLICY "product-images-delete" ON storage.objects
 -- Without these policies, bucket lookups fail with 42501.
 
 DO $$ BEGIN
-    CREATE POLICY "buckets_read_authenticated" ON storage.buckets
-        FOR SELECT TO authenticated USING (true);
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 'buckets') THEN
+        CREATE POLICY "buckets_read_authenticated" ON storage.buckets
+            FOR SELECT TO authenticated USING (true);
+        -- Only create anon policy if 'public' column exists (added by storage service)
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'storage' AND table_name = 'buckets' AND column_name = 'public') THEN
+            CREATE POLICY "buckets_read_anon" ON storage.buckets
+                FOR SELECT TO anon USING (public = true);
+        END IF;
+    END IF;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 DO $$ BEGIN
-    CREATE POLICY "buckets_read_anon" ON storage.buckets
-        FOR SELECT TO anon USING (public = true);
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 's3_multipart_uploads') THEN
+        CREATE POLICY "s3_uploads_auth_all" ON storage.s3_multipart_uploads
+            FOR ALL TO authenticated USING (true) WITH CHECK (true);
+    END IF;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
--- =============================================
--- RLS ON storage.s3_multipart_uploads
--- =============================================
--- Required for the storage service multipart upload flow.
-
 DO $$ BEGIN
-    CREATE POLICY "s3_uploads_auth_all" ON storage.s3_multipart_uploads
-        FOR ALL TO authenticated USING (true) WITH CHECK (true);
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
-
--- =============================================
--- RLS ON storage.s3_multipart_uploads_parts
--- =============================================
-
-DO $$ BEGIN
-    CREATE POLICY "s3_parts_auth_all" ON storage.s3_multipart_uploads_parts
-        FOR ALL TO authenticated USING (true) WITH CHECK (true);
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 's3_multipart_uploads_parts') THEN
+        CREATE POLICY "s3_parts_auth_all" ON storage.s3_multipart_uploads_parts
+            FOR ALL TO authenticated USING (true) WITH CHECK (true);
+    END IF;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 

@@ -89,15 +89,6 @@ CREATE POLICY cart_items_admin_read ON cart_items
     TO authenticated
     USING ((select auth.is_admin()));
 
--- Ensure weight_option lookups are efficient
--- The is_product_visible helper already uses SECURITY DEFINER
--- Verify it's working correctly
-DROP POLICY IF EXISTS "weight_options_public_read" ON weight_options;
-CREATE POLICY "weight_options_public_read" ON weight_options
-    FOR SELECT TO anon, authenticated
-    USING (
-        is_available = true
-        AND is_product_visible(product_id)
-    );
+-- weight_options table was dropped in migration 30 — skip policy creation
 
 COMMIT;

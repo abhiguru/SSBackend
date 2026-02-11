@@ -15,6 +15,7 @@ interface UpdateStatusRequest {
   delivery_staff_id?: string;
   notes?: string;
   cancellation_reason?: string;
+  estimated_delivery_at?: string;  // ISO 8601 datetime
 }
 
 // Valid status transitions
@@ -141,6 +142,17 @@ export async function handler(req: Request): Promise<Response> {
       sendDeliveryAssignmentPush(body.delivery_staff_id, order.order_number, address).catch(console.error);
     }
 
+    if (newStatus === 'confirmed') {
+      // Accept optional estimated delivery datetime
+      if (body.estimated_delivery_at) {
+        const parsed = new Date(body.estimated_delivery_at);
+        if (isNaN(parsed.getTime())) {
+          return errorResponse('INVALID_INPUT', 'estimated_delivery_at must be a valid ISO 8601 datetime', 400);
+        }
+        updateData.estimated_delivery_at = body.estimated_delivery_at;
+      }
+    }
+
     if (newStatus === 'cancelled') {
       updateData.cancellation_reason = body.cancellation_reason || body.notes || 'Cancelled by admin';
 
@@ -167,6 +179,7 @@ export async function handler(req: Request): Promise<Response> {
     if (updateData.delivery_otp_hash !== undefined) rpcUpdateData.delivery_otp_hash = updateData.delivery_otp_hash;
     if (updateData.delivery_otp_expires !== undefined) rpcUpdateData.delivery_otp_expires = updateData.delivery_otp_expires;
     if (updateData.cancellation_reason !== undefined) rpcUpdateData.cancellation_reason = updateData.cancellation_reason;
+    if (updateData.estimated_delivery_at !== undefined) rpcUpdateData.estimated_delivery_at = updateData.estimated_delivery_at;
 
     // Update order + record status history atomically
     const { data: orderResult, error: updateError } = await supabase.rpc('update_order_status_atomic', {

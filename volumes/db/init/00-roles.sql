@@ -52,7 +52,7 @@ $$;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticator') THEN
-        CREATE ROLE authenticator NOINHERIT LOGIN PASSWORD current_setting('app.settings.postgres_password', true);
+        CREATE ROLE authenticator NOINHERIT LOGIN;
     END IF;
 END
 $$;
@@ -84,7 +84,7 @@ GRANT USAGE ON SCHEMA storage TO anon, authenticated, service_role;
 
 -- Supavisor schema
 CREATE SCHEMA IF NOT EXISTS _supavisor;
-GRANT ALL ON SCHEMA _supavisor TO postgres;
+GRANT ALL ON SCHEMA _supavisor TO supabase_admin;
 GRANT ALL ON SCHEMA _supavisor TO supabase_admin;
 
 -- Extensions schema (if needed)
@@ -138,9 +138,19 @@ GRANT authenticator TO supabase_storage_admin;
 -- The storage service switches to authenticated/anon to evaluate RLS,
 -- so those roles need table-level permissions on all storage tables.
 -- (The actual access control is done by RLS policies, not these grants.)
-GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO authenticated;
-GRANT SELECT ON storage.objects TO anon;
-GRANT SELECT ON storage.buckets TO authenticated, anon;
+-- NOTE: storage tables are created by the storage service on first boot,
+-- so these grants are applied conditionally and also in 01-schema.sql.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 'objects') THEN
+        EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO authenticated';
+        EXECUTE 'GRANT SELECT ON storage.objects TO anon';
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 'buckets') THEN
+        EXECUTE 'GRANT SELECT ON storage.buckets TO authenticated, anon';
+    END IF;
+END
+$$;
 GRANT ALL ON ALL TABLES IN SCHEMA storage TO service_role;
 
 -- =============================================

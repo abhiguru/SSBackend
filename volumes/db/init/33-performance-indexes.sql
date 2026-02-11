@@ -29,7 +29,7 @@ CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id);
 -- Covers the UNIQUE constraint lookup pattern and user cart queries
 
 CREATE INDEX IF NOT EXISTS idx_cart_items_user_product_weight
-    ON cart_items(user_id, product_id, weight_option_id);
+    ON cart_items(user_id, product_id, custom_weight_grams);
 
 -- =============================================
 -- ITEM 3: Composite Index for Order Status History
@@ -86,9 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_orders_delivery_staff_status
     ON orders(delivery_staff_id, status)
     WHERE delivery_staff_id IS NOT NULL;
 
--- Weight options product lookup (for is_product_visible helper)
-CREATE INDEX IF NOT EXISTS idx_weight_options_product_available
-    ON weight_options(product_id, is_available);
+-- weight_options table was dropped in migration 30 — index skipped
 
 -- =============================================
 -- Additional Performance Indexes

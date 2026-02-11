@@ -170,13 +170,13 @@ BEGIN
         RAISE EXCEPTION 'UNAUTHORIZED: Authentication required';
     END IF;
 
-    -- OPTIMIZED: Added index hint via explicit column reference
+    -- OPTIMIZED: Uses custom_weight_grams with price_per_kg_paise
     SELECT
         COALESCE(SUM(ci.quantity), 0),
-        COALESCE(SUM(wo.price_paise * ci.quantity), 0)
+        COALESCE(SUM((p.price_per_kg_paise * ci.custom_weight_grams / 1000) * ci.quantity), 0)
     INTO v_item_count, v_subtotal_paise
     FROM cart_items ci
-    INNER JOIN weight_options wo ON wo.id = ci.weight_option_id
+    INNER JOIN products p ON p.id = ci.product_id
     WHERE ci.user_id = v_user_id;
 
     RETURN json_build_object(
