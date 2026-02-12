@@ -394,9 +394,9 @@ GRANT EXECUTE ON FUNCTION get_test_otp(VARCHAR) TO service_role;
 -- DEFAULT DATA
 -- =============================================
 
--- Insert default SMS config (production_mode=false for safety)
+-- Insert default SMS config (production_mode=true for production)
 INSERT INTO sms_config (production_mode, provider, msg91_sender_id)
-VALUES (false, 'msg91', 'MSSHOP')
+VALUES (true, 'msg91', 'MSSHOP')
 ON CONFLICT DO NOTHING;
 
 -- Insert test phone number

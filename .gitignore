@@ -27,3 +27,9 @@ node_modules/
 
 # Deno cache
 .deno/
+
+# Backup files
+backup/*.sql
+backup/*.sha256
+backup/*.dump
+backup/restore/

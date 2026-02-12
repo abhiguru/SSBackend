@@ -84,6 +84,9 @@ Deno.serve(async (req: Request) => {
       case 'shiprocket-cancel':
         handler = (await import('../shiprocket-cancel/index.ts')).handler;
         break;
+      case 'app-settings':
+        handler = (await import('../app-settings/index.ts')).handler;
+        break;
       case 'health':
       case '':
         return jsonResponse({
@@ -112,6 +115,7 @@ Deno.serve(async (req: Request) => {
             'shiprocket-webhook',
             'shiprocket-track',
             'shiprocket-cancel',
+            'app-settings',
           ],
         });
       default:
