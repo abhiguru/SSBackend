@@ -126,6 +126,16 @@ ALTER ROLE supabase_storage_admin SET search_path TO storage, public, extensions
 -- Grant storage admin ownership ability
 GRANT ALL ON SCHEMA storage TO supabase_storage_admin WITH GRANT OPTION;
 
+-- Default privileges: when postgres creates tables/sequences in storage schema,
+-- supabase_storage_admin automatically gets full access. This is critical because
+-- init scripts run as postgres and create storage tables before the storage
+-- container boots, which would otherwise lock out supabase_storage_admin from
+-- running its own migrations.
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage
+    GRANT ALL ON TABLES TO supabase_storage_admin;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage
+    GRANT ALL ON SEQUENCES TO supabase_storage_admin;
+
 -- Storage admin can create extensions
 GRANT CREATE ON SCHEMA extensions TO supabase_storage_admin;
 
@@ -151,6 +161,8 @@ BEGIN
     END IF;
 END
 $$;
+GRANT ALL ON ALL TABLES IN SCHEMA storage TO supabase_storage_admin;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA storage TO supabase_storage_admin;
 GRANT ALL ON ALL TABLES IN SCHEMA storage TO service_role;
 
 -- =============================================
