@@ -4,7 +4,6 @@
 
 import { getServiceClient, requireAdmin, generateDeliveryOTP, hashOTP } from "../_shared/auth.ts";
 import { sendOrderPush, sendDeliveryAssignmentPush } from "../_shared/push.ts";
-import { sendOrderStatusSMS, sendDeliveryOTP as sendDeliveryOTPSMS } from "../_shared/sms.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts";
 import { srFetchJSON } from "../_shared/shiprocket.ts";
@@ -133,9 +132,6 @@ export async function handler(req: Request): Promise<Response> {
       updateData.delivery_staff_id = body.delivery_staff_id;
       updateData.delivery_otp_hash = otpHash;
       updateData.delivery_otp_expires = otpExpiry;
-      // Send delivery OTP to customer
-      const customerPhone = (order.user as { phone: string })?.phone || order.shipping_phone;
-      sendDeliveryOTPSMS(customerPhone, order.order_number, deliveryOTP).catch(console.error);
 
       // Notify delivery staff
       const address = `${order.shipping_address_line1}, ${order.shipping_city}`;
@@ -199,9 +195,7 @@ export async function handler(req: Request): Promise<Response> {
       return errorResponse('SERVER_ERROR', 'Failed to update order', 500);
     }
 
-    // Send notifications to customer
-    const customerPhone = (order.user as { phone: string })?.phone || order.shipping_phone;
-    sendOrderStatusSMS(customerPhone, order.order_number, newStatus).catch(console.error);
+    // Send push notification to customer
     sendOrderPush(order.user_id, order.order_number, newStatus, order.id).catch(console.error);
 
     return jsonResponse({

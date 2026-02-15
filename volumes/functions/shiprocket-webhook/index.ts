@@ -6,7 +6,7 @@
 
 import { getServiceClient } from "../_shared/auth.ts";
 import { sendOrderPush } from "../_shared/push.ts";
-import { sendOrderStatusSMS } from "../_shared/sms.ts";
+
 import { corsHeaders } from "../_shared/cors.ts";
 import { jsonResponse } from "../_shared/response.ts";
 import { mapSRStatusToOrderStatus } from "../_shared/shiprocket.ts";
@@ -153,14 +153,13 @@ export async function handler(req: Request): Promise<Response> {
         return ok();
       }
 
-      // Send notifications to customer
-      const customerPhone = (order.shipping_phone as string) || "";
-      const orderNumber = order.order_number as string;
-      const userId = order.user_id as string;
-      const orderId = order.id as string;
-
-      sendOrderStatusSMS(customerPhone, orderNumber, newOrderStatus).catch(console.error);
-      sendOrderPush(userId, orderNumber, newOrderStatus, orderId).catch(console.error);
+      // Send push notification to customer
+      sendOrderPush(
+        order.user_id as string,
+        order.order_number as string,
+        newOrderStatus,
+        order.id as string,
+      ).catch(console.error);
     } catch (err) {
       console.error("Error updating order from webhook:", err);
       await markWebhookProcessed(supabase, awb, srShipmentId, String(err));

@@ -6,7 +6,7 @@
 
 import { getServiceClient, requireAdmin } from "../_shared/auth.ts";
 import { sendOrderPush } from "../_shared/push.ts";
-import { sendOrderStatusSMS } from "../_shared/sms.ts";
+
 import { corsHeaders } from "../_shared/cors.ts";
 import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts";
 import { srFetchJSON } from "../_shared/shiprocket.ts";
@@ -101,9 +101,7 @@ export async function handler(req: Request): Promise<Response> {
       .update({ sr_status: "Cancelled" })
       .eq("order_id", body.order_id);
 
-    // Notify customer
-    const customerPhone = (order.user as { phone: string })?.phone || order.shipping_phone;
-    sendOrderStatusSMS(customerPhone, order.order_number, "cancelled").catch(console.error);
+    // Send push notification to customer
     sendOrderPush(order.user_id, order.order_number, "cancelled", order.id).catch(console.error);
 
     return jsonResponse({

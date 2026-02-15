@@ -4,7 +4,7 @@
 
 import { getServiceClient, requireDeliveryStaff } from "../_shared/auth.ts";
 import { sendOrderPush } from "../_shared/push.ts";
-import { sendOrderStatusSMS } from "../_shared/sms.ts";
+
 import { corsHeaders } from "../_shared/cors.ts";
 import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts";
 
@@ -91,9 +91,7 @@ export async function handler(req: Request): Promise<Response> {
         notes: body.reason,
       });
 
-    // Send notifications to customer
-    const customerPhone = (order.user as { phone: string })?.phone || order.shipping_phone;
-    sendOrderStatusSMS(customerPhone, order.order_number, 'delivery_failed').catch(console.error);
+    // Send push notification to customer
     sendOrderPush(order.user_id, order.order_number, 'delivery_failed', order.id).catch(console.error);
 
     return jsonResponse({
