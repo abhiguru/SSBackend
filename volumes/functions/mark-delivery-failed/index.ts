@@ -68,6 +68,7 @@ export async function handler(req: Request): Promise<Response> {
       .update({
         status: 'delivery_failed',
         failure_reason: body.reason,
+        delivery_otp: null,
         delivery_otp_hash: null,
         delivery_otp_expires: null,
       })

@@ -11,6 +11,8 @@ import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts
 interface VerifyDeliveryRequest {
   order_id: string;
   otp: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export async function handler(req: Request): Promise<Response> {
@@ -79,13 +81,23 @@ export async function handler(req: Request): Promise<Response> {
     }
 
     // Update order to delivered
+    const updatePayload: Record<string, unknown> = {
+      status: 'delivered',
+      delivery_otp: null,
+      delivery_otp_hash: null,
+      delivery_otp_expires: null,
+    };
+
+    if (typeof body.latitude === 'number' && isFinite(body.latitude)) {
+      updatePayload.delivery_confirmed_latitude = body.latitude;
+    }
+    if (typeof body.longitude === 'number' && isFinite(body.longitude)) {
+      updatePayload.delivery_confirmed_longitude = body.longitude;
+    }
+
     const { data: updatedOrder, error: updateError } = await supabase
       .from('orders')
-      .update({
-        status: 'delivered',
-        delivery_otp_hash: null,
-        delivery_otp_expires: null,
-      })
+      .update(updatePayload)
       .eq('id', body.order_id)
       .select()
       .single();

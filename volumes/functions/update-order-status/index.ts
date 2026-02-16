@@ -1,8 +1,14 @@
-// Update Order Status Edge Function (Admin only)
+// Update Order Status Edge Function
 // POST /functions/v1/update-order-status
 // Body: { order_id, status, delivery_staff_id?, notes? }
+//
+// Role-based access:
+//   admin:    placed → confirmed/cancelled, confirmed → out_for_delivery/cancelled,
+//             out_for_delivery → delivered/delivery_failed/cancelled
+//   customer: placed → cancelled (own orders only)
+//   delivery_staff: rejected (use verify-delivery-otp / mark-delivery-failed)
 
-import { getServiceClient, requireAdmin, generateDeliveryOTP, hashOTP } from "../_shared/auth.ts";
+import { getServiceClient, requireAuth, generateDeliveryOTP, hashOTP } from "../_shared/auth.ts";
 import { sendOrderPush, sendDeliveryAssignmentPush } from "../_shared/push.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { jsonResponse, errorResponse, handleError } from "../_shared/response.ts";
@@ -10,21 +16,31 @@ import { srFetchJSON } from "../_shared/shiprocket.ts";
 
 interface UpdateStatusRequest {
   order_id: string;
-  status: 'confirmed' | 'out_for_delivery' | 'cancelled';
+  status: 'confirmed' | 'out_for_delivery' | 'cancelled' | 'delivered' | 'delivery_failed';
   delivery_staff_id?: string;
   notes?: string;
   cancellation_reason?: string;
   estimated_delivery_at?: string;  // ISO 8601 datetime
 }
 
-// Valid status transitions
-const validTransitions: Record<string, string[]> = {
+// Role-based status transitions
+// Terminal statuses (delivered, cancelled, delivery_failed) have no transitions for any role
+const adminTransitions: Record<string, string[]> = {
   'placed': ['confirmed', 'cancelled'],
   'confirmed': ['out_for_delivery', 'cancelled'],
   'out_for_delivery': ['delivered', 'cancelled', 'delivery_failed'],
   'delivered': [],
   'cancelled': [],
-  'delivery_failed': ['out_for_delivery', 'cancelled'],
+  'delivery_failed': [],
+};
+
+const customerTransitions: Record<string, string[]> = {
+  'placed': ['cancelled'],
+  'confirmed': [],
+  'out_for_delivery': [],
+  'delivered': [],
+  'cancelled': [],
+  'delivery_failed': [],
 };
 
 export async function handler(req: Request): Promise<Response> {
@@ -39,9 +55,14 @@ export async function handler(req: Request): Promise<Response> {
       return errorResponse('METHOD_NOT_ALLOWED', 'Only POST requests allowed', 405);
     }
 
-    // Require admin authentication
-    const auth = await requireAdmin(req);
+    // Require authentication (any role)
+    const auth = await requireAuth(req);
     const supabase = getServiceClient();
+
+    // Delivery staff must use dedicated endpoints (verify-delivery-otp, mark-delivery-failed)
+    if (auth.role === 'delivery_staff') {
+      return errorResponse('FORBIDDEN', 'Delivery staff must use verify-delivery-otp or mark-delivery-failed endpoints', 403);
+    }
 
     // Parse request body
     const body: UpdateStatusRequest = await req.json();
@@ -61,11 +82,19 @@ export async function handler(req: Request): Promise<Response> {
       return errorResponse('ORDER_NOT_FOUND', 'Order not found', 404);
     }
 
-    // Validate status transition
+    // Customer can only cancel their own orders
+    if (auth.role === 'customer') {
+      if (order.user_id !== auth.userId) {
+        return errorResponse('FORBIDDEN', 'You can only modify your own orders', 403);
+      }
+    }
+
+    // Validate status transition based on role
     const currentStatus = order.status as string;
     const newStatus = body.status;
 
-    const allowedTransitions = validTransitions[currentStatus] || [];
+    const transitionMap = auth.role === 'admin' ? adminTransitions : customerTransitions;
+    const allowedTransitions = transitionMap[currentStatus] || [];
     if (!allowedTransitions.includes(newStatus)) {
       return errorResponse(
         'INVALID_TRANSITION',
@@ -115,11 +144,18 @@ export async function handler(req: Request): Promise<Response> {
         return errorResponse('INVALID_DELIVERY_STAFF', 'Delivery staff account is deactivated', 400);
       }
 
-      // Generate delivery OTP
+      updateData.delivery_staff_id = body.delivery_staff_id;
+
+      // Notify delivery staff
+      const address = `${order.shipping_address_line1}, ${order.shipping_city}`;
+      sendDeliveryAssignmentPush(body.delivery_staff_id, order.order_number, address).catch(console.error);
+    }
+
+    if (newStatus === 'confirmed') {
+      // Generate delivery OTP at confirmation so customer has it ready
       const deliveryOTP = generateDeliveryOTP();
       const otpHash = await hashOTP(deliveryOTP);
 
-      // Get delivery OTP expiry from settings
       const { data: settings } = await supabase
         .from('app_settings')
         .select('value')
@@ -129,16 +165,10 @@ export async function handler(req: Request): Promise<Response> {
       const expiryHours = settings?.value ? parseInt(settings.value) : 24;
       const otpExpiry = new Date(Date.now() + expiryHours * 60 * 60 * 1000).toISOString();
 
-      updateData.delivery_staff_id = body.delivery_staff_id;
+      updateData.delivery_otp = deliveryOTP;
       updateData.delivery_otp_hash = otpHash;
       updateData.delivery_otp_expires = otpExpiry;
 
-      // Notify delivery staff
-      const address = `${order.shipping_address_line1}, ${order.shipping_city}`;
-      sendDeliveryAssignmentPush(body.delivery_staff_id, order.order_number, address).catch(console.error);
-    }
-
-    if (newStatus === 'confirmed') {
       // Accept optional estimated delivery datetime
       if (body.estimated_delivery_at) {
         const parsed = new Date(body.estimated_delivery_at);
@@ -150,7 +180,8 @@ export async function handler(req: Request): Promise<Response> {
     }
 
     if (newStatus === 'cancelled') {
-      updateData.cancellation_reason = body.cancellation_reason || body.notes || 'Cancelled by admin';
+      const defaultReason = auth.role === 'customer' ? 'Cancelled by customer' : 'Cancelled by admin';
+      updateData.cancellation_reason = body.cancellation_reason || body.notes || defaultReason;
 
       // Also cancel on Shiprocket if applicable
       if (order.delivery_method === 'shiprocket') {
@@ -172,6 +203,7 @@ export async function handler(req: Request): Promise<Response> {
     // Build update data for RPC (only non-status fields)
     const rpcUpdateData: Record<string, unknown> = {};
     if (updateData.delivery_staff_id !== undefined) rpcUpdateData.delivery_staff_id = updateData.delivery_staff_id;
+    if (updateData.delivery_otp !== undefined) rpcUpdateData.delivery_otp = updateData.delivery_otp;
     if (updateData.delivery_otp_hash !== undefined) rpcUpdateData.delivery_otp_hash = updateData.delivery_otp_hash;
     if (updateData.delivery_otp_expires !== undefined) rpcUpdateData.delivery_otp_expires = updateData.delivery_otp_expires;
     if (updateData.cancellation_reason !== undefined) rpcUpdateData.cancellation_reason = updateData.cancellation_reason;
